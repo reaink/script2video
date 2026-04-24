@@ -23,8 +23,8 @@ export function buildStoryboardUserPrompt(args: BuildPromptArgs): string {
   const refLine =
     args.referenceImageNames && args.referenceImageNames.length > 0
       ? `Reference images attached (1-based): ${args.referenceImageNames
-          .map((n, i) => `${i + 1}. ${n}`)
-          .join(" | ")}. Set referenceImageIndex on relevant shots.`
+        .map((n, i) => `${i + 1}. ${n}`)
+        .join(" | ")}. Set referenceImageIndex on relevant shots.`
       : ``;
   return [
     `Target clip duration per shot: ${args.durationSec} seconds (each shot's durationSec MUST equal this).`,

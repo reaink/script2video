@@ -1,8 +1,11 @@
 "use client";
 
 import { Button, Card, Chip, Drawer, Spinner, useOverlayState } from "@heroui/react";
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useJobsStore } from "@/lib/stores/jobs";
+import { getCachedVideoUrl } from "@/lib/db/videoCache";
+import { buildShotVtt, vttToDataUrl } from "@/lib/utils/vtt";
+import type { Shot } from "@/lib/types";
 
 interface Props {
   triggerLabel?: string;
@@ -89,21 +92,11 @@ export function JobsPanel({ triggerLabel = "查看生成进度" }: Props) {
                           <div className="text-danger">错误：{job.error}</div>
                         )}
                         {job?.videoUri && (
-                          <div className="space-y-2">
-                            <video
-                              controls
-                              src={`/api/video/proxy?uri=${encodeURIComponent(job.videoUri)}`}
-                              className="w-full rounded-md bg-black"
-                            />
-                            <div className="flex gap-2">
-                              <a
-                                className="text-xs text-primary underline"
-                                href={`/api/video/proxy?uri=${encodeURIComponent(job.videoUri)}&download=1`}
-                              >
-                                下载 mp4
-                              </a>
-                            </div>
-                          </div>
+                          <ShotPlayer
+                            shot={s}
+                            videoUri={job.videoUri}
+                            blobUrl={job.videoBlobUrl}
+                          />
                         )}
                         {status === "failed" && (
                           <Button size="sm" variant="ghost" onPress={() => retry(s.index)}>
@@ -132,4 +125,104 @@ export function JobsPanel({ triggerLabel = "查看生成进度" }: Props) {
       </Drawer>
     </>
   );
+}
+
+function ShotPlayer({
+  shot,
+  videoUri,
+  blobUrl,
+}: {
+  shot: Shot;
+  videoUri: string;
+  blobUrl?: string;
+}) {
+  // Try the IDB cache first; fall back to the live proxy if Veo's URI is still fresh.
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(blobUrl ?? null);
+  const [restoring, setRestoring] = useState<boolean>(!blobUrl);
+  const [hasCache, setHasCache] = useState<boolean>(Boolean(blobUrl));
+
+  useEffect(() => {
+    if (blobUrl) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setResolvedUrl(blobUrl);
+      setHasCache(true);
+      setRestoring(false);
+      return;
+    }
+    let revoked: string | null = null;
+    setRestoring(true);
+    void (async () => {
+      try {
+        const cached = await getCachedVideoUrl(videoUri);
+        if (cached) {
+          revoked = cached;
+          setResolvedUrl(cached);
+          setHasCache(true);
+        } else {
+          setResolvedUrl(`/api/video/proxy?uri=${encodeURIComponent(videoUri)}`);
+          setHasCache(false);
+        }
+      } finally {
+        setRestoring(false);
+      }
+    })();
+    return () => {
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [videoUri, blobUrl]);
+
+  const vttUrl = useMemo(() => {
+    const vtt = buildShotVtt(shot);
+    return vtt ? vttToDataUrl(vtt) : null;
+  }, [shot]);
+
+  if (restoring && !resolvedUrl) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-default-500">
+        <Spinner size="sm" /> 加载缓存…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <video
+        controls
+        className="w-full rounded-md bg-black"
+        crossOrigin="anonymous"
+        src={resolvedUrl ?? undefined}
+      >
+        {vttUrl && (
+          <track
+            kind="subtitles"
+            src={vttUrl}
+            srcLang={inferLang(shot.subtitle)}
+            label="字幕"
+            default
+          />
+        )}
+      </video>
+      <div className="flex flex-wrap gap-3 text-xs">
+        <a
+          className="text-primary underline"
+          href={`/api/video/proxy?uri=${encodeURIComponent(videoUri)}&download=1`}
+        >
+          下载 mp4
+        </a>
+        {vttUrl && (
+          <a className="text-primary underline" href={vttUrl} download={`shot-${shot.index}.vtt`}>
+            下载 vtt
+          </a>
+        )}
+        <span className={hasCache ? "text-success" : "text-warning"}>
+          {hasCache ? "已缓存" : "未缓存（实时代理）"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function inferLang(text: string | undefined): string {
+  if (!text) return "und";
+  return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
 }

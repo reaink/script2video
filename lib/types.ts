@@ -99,6 +99,8 @@ export interface ShotJob {
   status: ShotJobStatus;
   operationName?: string;
   videoUri?: string;
+  /** Object URL pointing to the cached blob in IndexedDB. Survives Veo's 2-day expiry. */
+  videoBlobUrl?: string;
   error?: string;
   startedAt?: number;
   finishedAt?: number;

@@ -16,7 +16,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Key } from "react";
 import { compressImage } from "@/lib/client/media";
 import { useJobsStore } from "@/lib/stores/jobs";
+import { useSessionsStore } from "@/lib/stores/sessions";
 import { JobsPanel } from "@/components/JobsPanel";
+import { SessionsPanel } from "@/components/SessionsPanel";
 import type { GeminiModel, ReferenceImage, Storyboard } from "@/lib/types";
 
 type Models = { chat: GeminiModel[]; video: GeminiModel[]; image: GeminiModel[] };
@@ -65,6 +67,13 @@ function loadUiSettings(): UiSettings {
   }
 }
 
+function deriveSessionTitle(messages: UiMessage[]): string {
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return "新会话";
+  const t = first.content.trim().split(/\s+/).slice(0, 6).join(" ");
+  return t.length > 40 ? `${t.slice(0, 40)}…` : t || "新会话";
+}
+
 export function ChatWorkspace() {
   const [models, setModels] = useState<Models | null>(null);
   const [loadingModels, setLoadingModels] = useState(true);
@@ -75,6 +84,64 @@ export function ChatWorkspace() {
   const [refImages, setRefImages] = useState<ReferenceImage[]>([]);
   const startJobs = useJobsStore((s) => s.start);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const sessionsLoaded = useSessionsStore((s) => s.loaded);
+  const sessionsList = useSessionsStore((s) => s.sessions);
+  const activeId = useSessionsStore((s) => s.activeId);
+  const loadSessions = useSessionsStore((s) => s.load);
+  const newSession = useSessionsStore((s) => s.newSession);
+  const saveActive = useSessionsStore((s) => s.saveActive);
+  /** Tracks the id we last hydrated from to avoid clobbering pending edits. */
+  const hydratedIdRef = useRef<string | null>(null);
+
+  // Boot sessions: load IDB, ensure there is at least one active session.
+  useEffect(() => {
+    void loadSessions();
+  }, [loadSessions]);
+
+  useEffect(() => {
+    if (!sessionsLoaded) return;
+    if (!activeId) {
+      // Will trigger the hydrate effect below on the next tick.
+      newSession();
+    }
+  }, [sessionsLoaded, activeId, newSession]);
+
+  // Hydrate UI when the active session id flips (e.g. user picks from sidebar).
+  useEffect(() => {
+    if (!activeId || hydratedIdRef.current === activeId) return;
+    const rec = sessionsList.find((s) => s.id === activeId);
+    if (!rec) return;
+    hydratedIdRef.current = activeId;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMessages(
+      rec.messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        storyboard: m.storyboard,
+      }))
+    );
+    setRefImages(rec.refImages);
+  }, [activeId, sessionsList]);
+
+  // Persist edits back to IDB. Debounced via a microtask-batched effect.
+  useEffect(() => {
+    if (!activeId || hydratedIdRef.current !== activeId) return;
+    const handle = window.setTimeout(() => {
+      void saveActive({
+        title: deriveSessionTitle(messages),
+        messages: messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          storyboard: m.storyboard,
+        })),
+        refImages,
+      });
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [messages, refImages, activeId, saveActive]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -367,7 +434,8 @@ export function ChatWorkspace() {
 
       {/* 右：聊天区 */}
       <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-between">
+          <SessionsPanel />
           <JobsPanel />
         </div>
         <Card className="flex-1 overflow-hidden">

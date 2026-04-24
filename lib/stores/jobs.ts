@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { extractLastFrame } from "@/lib/client/media";
+import { fetchAndCacheVideo } from "@/lib/db/videoCache";
 import type { ReferenceImage, Shot, ShotJob, ShotJobStatus } from "@/lib/types";
 
 export interface JobConfig {
@@ -140,17 +141,27 @@ export const useJobsStore = create<RunState>((set, get) => {
             sData.response?.generatedVideos?.[0]?.video?.uri ??
             sData.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
           if (!uri) throw new Error("no video uri in response");
+
+          // Cache the video bytes immediately so we survive Veo's 2-day expiry.
+          let blobUrl: string | undefined;
+          try {
+            blobUrl = await fetchAndCacheVideo(uri);
+          } catch {
+            // best-effort; UI can still fall back to the live proxy
+          }
+
           setJob(shot.index, {
             status: "done",
             videoUri: uri,
+            videoBlobUrl: blobUrl,
             finishedAt: Date.now(),
           });
 
           // Extract tail frame for the next shot in chain mode.
           if (cfg.chainFrames) {
             try {
-              const proxied = `/api/video/proxy?uri=${encodeURIComponent(uri)}`;
-              const tail = await extractLastFrame(proxied, { maxEdge: 1280 });
+              const src = blobUrl ?? `/api/video/proxy?uri=${encodeURIComponent(uri)}`;
+              const tail = await extractLastFrame(src, { maxEdge: 1280 });
               lastFrameByIndex[shot.index] = tail;
             } catch {
               // tail extraction is best-effort
