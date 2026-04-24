@@ -3,8 +3,10 @@ import { requireSession } from "@/lib/server/session";
 import { generateContent } from "@/lib/providers/gemini";
 import {
   STORYBOARD_SYSTEM_PROMPT,
+  STORYBOARD_REVIEW_SYSTEM_PROMPT,
   STORYBOARD_RESPONSE_SCHEMA,
   buildStoryboardUserPrompt,
+  buildStoryboardReviewPrompt,
   parseStoryboard,
 } from "@/lib/prompts/storyboard";
 
@@ -87,7 +89,38 @@ export async function POST(req: Request) {
     if (!text) {
       return NextResponse.json({ error: "empty response", raw }, { status: 502 });
     }
-    const storyboard = parseStoryboard(text);
+    let storyboard = parseStoryboard(text);
+
+    // Review pass: re-feed the storyboard to the model for an end-to-end audit and correction.
+    // Skipped silently on failure — the first-pass output is still returned.
+    const allowedDurations = body.allowedDurations?.length ? body.allowedDurations : [4, 6, 8];
+    try {
+      const reviewText = buildStoryboardReviewPrompt({
+        storyboard,
+        allowedDurations,
+        maxDurationSec: body.durationSec,
+        language: body.language,
+        withSubtitle: body.withSubtitle,
+      });
+      const reviewRaw = (await generateContent({
+        apiKey: session.apiKey,
+        model: body.model,
+        contents: [{ role: "user", parts: [{ text: reviewText }] }],
+        systemInstruction: { parts: [{ text: STORYBOARD_REVIEW_SYSTEM_PROMPT }] },
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: STORYBOARD_RESPONSE_SCHEMA,
+          temperature: 0.4,
+        },
+      })) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+      const reviewedText = reviewRaw.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
+      if (reviewedText) {
+        storyboard = parseStoryboard(reviewedText);
+      }
+    } catch {
+      // best-effort; first-pass storyboard is still valid
+    }
+
     return NextResponse.json({ storyboard, rawText: text });
   } catch (e) {
     return NextResponse.json({ error: String((e as Error).message) }, { status: 500 });

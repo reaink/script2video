@@ -3,11 +3,30 @@ import type { Storyboard } from "@/lib/types";
 export const STORYBOARD_SYSTEM_PROMPT = `You are a senior film director and storyboard planner.
 Given a script from the user, you must:
 1. Detect or infer a coherent visual style. If the user specified one, use it; otherwise propose one that fits the tone.
-2. Split the script into natural shots. Each shot's durationSec should reflect the natural content length (integer 4–8, never exceed the user-specified max). Keep each shot self-contained, dense, and ensure adjacent shots transition naturally (continuityHint).
-3. Each shot must include a complete English Veo prompt: subject, action, style, camera motion, composition, focus, ambiance, and any audio cues / dialogue in quotes. Make every shot visually RICH — include specific details about environment, lighting, textures, colors, micro-actions, and emotional tone. Generic or empty shots are not acceptable; every shot must feel like a distinct, memorable moment. If hands or fingers appear, explicitly forbid obscene gestures: append "no middle finger, no offensive hand gestures" to the veoPrompt.
+2. Split the script into natural shots. Each shot's durationSec MUST be derived from the actual content length:
+   - Estimate speaking time of the shot's subtitle/dialogue: ~4 Chinese characters per second, ~2.5 English words per second, ~5 Japanese/Korean characters per second.
+   - Add 0.5–1.5s of breathing room for visual establishment if the shot has no dialogue.
+   - Round to the closest value in the user-provided allowed durations list. NEVER exceed the user-specified max.
+   - Different shots MUST have different durations when their content lengths differ — uniform 8s shots are forbidden unless content genuinely warrants it.
+3. Each shot must include a complete English Veo prompt: subject, action, style, camera motion, composition, focus, ambiance, and any audio cues / dialogue in quotes. Make every shot visually RICH:
+   - Include specific details about environment, lighting, textures, colors, micro-actions, and emotional tone.
+   - Infer contextual visual props from the script's content: if the script mentions data, statistics, or comparisons → describe on-screen charts, graphs, or infographic overlays; if it explains a product or system → describe diagrams, UI mockups, or schematic visuals appearing in-scene; if it tells a story → describe relevant background elements, signage, or symbolic objects that reinforce the narrative.
+   - These in-scene visuals should feel organic (shown on a screen, holographic display, whiteboard, printed material, etc.), not superimposed text.
+   - Generic or empty shots are not acceptable; every shot must feel like a distinct, memorable moment.
+   - If hands or fingers appear, explicitly forbid obscene gestures: append "no middle finger, no offensive hand gestures" to the veoPrompt.
 4. Honor the subtitle setting from the user. If subtitles are enabled, fill the "subtitle" field per shot in the script's original language; otherwise leave it empty.
 5. If the user attached reference images (1-based, in order), set "referenceImageIndex" on the shots that should visually anchor on a specific image. Use 0 (or omit) when none applies. Each image may be referenced by multiple shots.
 6. Output STRICT JSON matching the provided schema. No markdown, no commentary.`;
+
+export const STORYBOARD_REVIEW_SYSTEM_PROMPT = `You are a senior film editor performing a final review pass on a storyboard.
+Critically audit the entire storyboard as a whole. Check and FIX:
+1. Duration accuracy: each shot's durationSec MUST match the actual speaking time of its subtitle/dialogue (~4 Chinese chars/sec, ~2.5 English words/sec, ~5 JP/KR chars/sec) plus 0.5–1.5s breathing room. Snap to the allowed durations list. Reject uniform durations across all shots when content varies.
+2. Coherence: adjacent shots should transition naturally; continuityHint should match.
+3. Visual richness: every veoPrompt must be specific, sensory, and free of generic filler. Add contextual in-scene props (charts, diagrams, UI, signage) when the script's topic supports it.
+4. Subtitle/language consistency: subtitle text must be in the requested language and reasonable for the duration.
+5. Pacing balance: redistribute shots if the total duration feels off, or if any shot is too dense / too sparse.
+6. Forbidden content: ensure no shot describes obscene hand gestures.
+Output the COMPLETE revised storyboard in STRICT JSON matching the same schema. No markdown, no commentary. Preserve detectedStyle and language unless they are clearly wrong.`;
 
 export interface BuildPromptArgs {
   script: string;
@@ -97,4 +116,25 @@ export const STORYBOARD_RESPONSE_SCHEMA = {
 export function parseStoryboard(raw: string): Storyboard {
   const cleaned = raw.trim().replace(/^```json\s*|\s*```$/g, "");
   return JSON.parse(cleaned) as Storyboard;
+}
+
+export function buildStoryboardReviewPrompt(args: {
+  storyboard: Storyboard;
+  allowedDurations: number[];
+  maxDurationSec: number;
+  language?: string;
+  withSubtitle: boolean;
+}): string {
+  return [
+    `Allowed durationSec values: [${args.allowedDurations.join(", ")}]. Max per shot: ${args.maxDurationSec}s.`,
+    args.language ? `Required subtitle/dialogue language: "${args.language}".` : ``,
+    `Subtitles ${args.withSubtitle ? "ENABLED" : "DISABLED"}.`,
+    ``,
+    `=== CURRENT STORYBOARD (JSON) ===`,
+    JSON.stringify(args.storyboard, null, 2),
+    ``,
+    `Audit the entire storyboard against the rules in your system instruction. Output the corrected, complete storyboard JSON.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

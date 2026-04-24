@@ -12,7 +12,6 @@ import {
   toast,
 } from "@heroui/react";
 import { useEffect, useState } from "react";
-import type { Key } from "react";
 import type { GeminiModel } from "@/lib/types";
 
 export default function SettingsPage() {
@@ -98,8 +97,8 @@ export default function SettingsPage() {
             <Card.Content className="flex flex-col gap-5 p-6">
               <Select
                 className="w-[260px]"
-                selectedKey={provider}
-                onSelectionChange={(k: Key | null) => setProvider((k ?? "gemini") as "gemini")}
+                value={provider}
+                onChange={(k) => k && !Array.isArray(k) && setProvider(k as "gemini")}
               >
                 <Label>Provider</Label>
                 <Select.Trigger>

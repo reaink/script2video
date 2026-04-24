@@ -85,7 +85,9 @@ function pickPreferred(list: GeminiModel[], preferred: string[]): string | undef
 export function ChatWorkspace() {
   const [models, setModels] = useState<Models | null>(null);
   const [loadingModels, setLoadingModels] = useState(true);
-  const [settings, setSettings] = useState<UiSettings>(loadUiSettings);
+  // Always start with DEFAULT_SETTINGS so server and client render identically.
+  // useEffect below patches in the persisted values after hydration.
+  const [settings, setSettings] = useState<UiSettings>(DEFAULT_SETTINGS);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -101,6 +103,8 @@ export function ChatWorkspace() {
   const saveActive = useSessionsStore((s) => s.saveActive);
   /** Tracks the id we last hydrated from to avoid clobbering pending edits. */
   const hydratedIdRef = useRef<string | null>(null);
+  /** Pending resubmit stored when models aren't loaded yet at hydration time. */
+  const pendingResubmitRef = useRef<{ script: string; history: UiMessage[] } | null>(null);
 
   // Boot sessions: load IDB, ensure there is at least one active session.
   useEffect(() => {
@@ -115,23 +119,96 @@ export function ChatWorkspace() {
     }
   }, [sessionsLoaded, activeId, newSession]);
 
+  // Core fetch logic — extracted so both submit() and auto-resubmit can call it.
+  const doFetchStoryboard = useCallback(async (script: string, historyMessages: UiMessage[]) => {
+    if (!settings.chatModel) {
+      toast.warning("\u8bf7\u5148\u9009\u62e9\u5bf9\u8bdd\u6a21\u578b");
+      return;
+    }
+    const m = settings.videoModel ?? "";
+    const durations: number[] = m.includes("lite") ? [5, 6, 8] : m.includes("veo-3.0") ? [8] : [4, 6, 8];
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: settings.chatModel,
+          script,
+          durationSec: settings.durationSec,
+          allowedDurations: durations,
+          aspectRatio: settings.aspectRatio,
+          withSubtitle: settings.withSubtitle,
+          language: settings.language,
+          history: historyMessages.map((h) => ({ role: h.role, content: h.content })),
+          referenceImages: refImages.map((r) => ({
+            name: r.name,
+            mimeType: r.mimeType,
+            bytesBase64Encoded: r.bytesBase64Encoded,
+          })),
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        toast.danger("\u62c6\u5206\u5931\u8d25", { description: d.error });
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "assistant", content: `\u274c ${d.error}` },
+        ]);
+        return;
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: `\u5df2\u62c6\u5206 ${d.storyboard.shots.length} \u4e2a\u5206\u955c`,
+          storyboard: d.storyboard as Storyboard,
+        },
+      ]);
+    } catch (e) {
+      toast.danger("\u7f51\u7edc\u9519\u8bef", { description: String(e) });
+    } finally {
+      setSubmitting(false);
+    }
+  }, [settings.chatModel, settings.videoModel, settings.durationSec, settings.aspectRatio, settings.withSubtitle, settings.language, refImages]);
+
   // Hydrate UI when the active session id flips (e.g. user picks from sidebar).
   useEffect(() => {
     if (!activeId || hydratedIdRef.current === activeId) return;
     const rec = sessionsList.find((s) => s.id === activeId);
     if (!rec) return;
     hydratedIdRef.current = activeId;
+    const hydratedMessages = rec.messages.map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      storyboard: m.storyboard,
+    }));
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMessages(
-      rec.messages.map((m) => ({
-        id: m.id,
-        role: m.role,
-        content: m.content,
-        storyboard: m.storyboard,
-      }))
-    );
+    setMessages(hydratedMessages);
     setRefImages(rec.refImages);
+    // Auto-resume: if the last message is an unanswered user message, the fetch
+    // was interrupted (e.g. page refresh mid-generation). Re-submit it.
+    const lastMsg = hydratedMessages[hydratedMessages.length - 1];
+    if (lastMsg?.role === "user") {
+      const pending = { script: lastMsg.content, history: hydratedMessages.slice(0, -1) };
+      if (settings.chatModel) {
+        void doFetchStoryboard(pending.script, pending.history);
+      } else {
+        pendingResubmitRef.current = pending;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, sessionsList]);
+
+  // Fire pending resubmit once models are available (race: models load after hydration).
+  useEffect(() => {
+    if (!settings.chatModel || !pendingResubmitRef.current) return;
+    const { script, history } = pendingResubmitRef.current;
+    pendingResubmitRef.current = null;
+    void doFetchStoryboard(script, history);
+  }, [settings.chatModel, doFetchStoryboard]);
 
   // Persist edits back to IDB. Debounced via a microtask-batched effect.
   useEffect(() => {
@@ -151,8 +228,15 @@ export function ChatWorkspace() {
     return () => window.clearTimeout(handle);
   }, [messages, refImages, activeId, saveActive]);
 
+  // Restore persisted settings after hydration (client-only).
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    const loaded = loadUiSettings();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSettings(loaded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
@@ -179,7 +263,7 @@ export function ChatWorkspace() {
           "models/veo-3.0-fast-generate-001",
         ]) ?? d.video[0]?.name,
         imageModel: s.imageModel ?? pickPreferred(d.image, [
-          "models/nano-banana-pro-preview",
+          "models/gemini-3.1-flash-image-preview",
           "models/gemini-3-pro-image-preview",
         ]) ?? d.image.find((x) => /(image-preview|nano-banana)/.test(x.name))?.name,
       }));
@@ -233,57 +317,17 @@ export function ChatWorkspace() {
       toast.warning("\u8bf7\u5148\u9009\u62e9\u5bf9\u8bdd\u6a21\u578b");
       return;
     }
-    const userMsg: UiMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: script,
-    };
+    const userMsg: UiMessage = { id: crypto.randomUUID(), role: "user", content: script };
+    const historyForApi = [...messages];
     setMessages((m) => [...m, userMsg]);
     setInput("");
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: settings.chatModel,
-          script,
-          durationSec: settings.durationSec,
-          allowedDurations,
-          aspectRatio: settings.aspectRatio,
-          withSubtitle: settings.withSubtitle,
-          language: settings.language,
-          history: messages.map((m) => ({ role: m.role, content: m.content })),
-          referenceImages: refImages.map((r) => ({
-            name: r.name,
-            mimeType: r.mimeType,
-            bytesBase64Encoded: r.bytesBase64Encoded,
-          })),
-        }),
-      });
-      const d = await res.json();
-      if (!res.ok) {
-        toast.danger("\u62c6\u5206\u5931\u8d25", { description: d.error });
-        setMessages((m) => [
-          ...m,
-          { id: crypto.randomUUID(), role: "assistant", content: `\u274c ${d.error}` },
-        ]);
-        return;
-      }
-      setMessages((m) => [
-        ...m,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: `\u5df2\u62c6\u5206 ${d.storyboard.shots.length} \u4e2a\u5206\u955c`,
-          storyboard: d.storyboard as Storyboard,
-        },
-      ]);
-    } catch (e) {
-      toast.danger("\u7f51\u7edc\u9519\u8bef", { description: String(e) });
-    } finally {
-      setSubmitting(false);
-    }
+    // Flush user message to IDB immediately so it survives a page refresh mid-generation.
+    await saveActive({
+      title: deriveSessionTitle([...messages, userMsg]),
+      messages: [...messages, userMsg].map((m) => ({ id: m.id, role: m.role, content: m.content, storyboard: m.storyboard })),
+      refImages,
+    });
+    await doFetchStoryboard(script, historyForApi);
   };
 
   const startGeneration = (sb: Storyboard) => {
@@ -305,8 +349,8 @@ export function ChatWorkspace() {
   };
 
   const setSelected = <K extends keyof UiSettings>(key: K) =>
-    (k: Key | null) => {
-      if (k == null) return;
+    (k: Key | Key[] | null) => {
+      if (k == null || Array.isArray(k)) return;
       setSettings((s) => ({ ...s, [key]: k as UiSettings[K] }));
     };
 
@@ -323,8 +367,8 @@ export function ChatWorkspace() {
           </div>
 
           <Select
-            selectedKey={settings.chatModel ?? null}
-            onSelectionChange={setSelected("chatModel")}
+            value={settings.chatModel ?? null}
+            onChange={setSelected("chatModel")}
             placeholder="选择对话模型"
           >
             <Label>对话模型</Label>
@@ -345,8 +389,8 @@ export function ChatWorkspace() {
           </Select>
 
           <Select
-            selectedKey={settings.videoModel ?? null}
-            onSelectionChange={setSelected("videoModel")}
+            value={settings.videoModel ?? null}
+            onChange={setSelected("videoModel")}
             placeholder="选择视频模型"
           >
             <Label>视频模型 (Veo)</Label>
@@ -367,8 +411,8 @@ export function ChatWorkspace() {
           </Select>
 
           <Select
-            selectedKey={settings.imageModel ?? null}
-            onSelectionChange={setSelected("imageModel")}
+            value={settings.imageModel ?? null}
+            onChange={setSelected("imageModel")}
             placeholder="选择图像模型"
           >
             <Label>图像模型 (帧合成)</Label>
@@ -389,9 +433,9 @@ export function ChatWorkspace() {
           </Select>
 
           <Select
-            selectedKey={settings.aspectRatio}
-            onSelectionChange={(k) =>
-              k && setSettings((s) => ({ ...s, aspectRatio: k as "16:9" | "9:16" }))
+            value={settings.aspectRatio}
+            onChange={(k) =>
+              k && !Array.isArray(k) && setSettings((s) => ({ ...s, aspectRatio: k as "16:9" | "9:16" }))
             }
           >
             <Label>画幅</Label>
@@ -414,9 +458,9 @@ export function ChatWorkspace() {
           </Select>
 
           <Select
-            selectedKey={String(settings.durationSec)}
-            onSelectionChange={(k) =>
-              k && setSettings((s) => ({ ...s, durationSec: Number(k) as 4 | 5 | 6 | 8 }))
+            value={String(settings.durationSec)}
+            onChange={(k) =>
+              k && !Array.isArray(k) && setSettings((s) => ({ ...s, durationSec: Number(k) as 4 | 5 | 6 | 8 }))
             }
           >
             <Label>最大单镜头时长</Label>
@@ -437,8 +481,8 @@ export function ChatWorkspace() {
           </Select>
 
           <Select
-            selectedKey={settings.language}
-            onSelectionChange={(k) => k && setSettings((s) => ({ ...s, language: String(k) }))}
+            value={settings.language}
+            onChange={(k) => k && !Array.isArray(k) && setSettings((s) => ({ ...s, language: String(k) }))}
           >
             <Label>字幕 / 对话语言</Label>
             <Select.Trigger>
@@ -466,37 +510,57 @@ export function ChatWorkspace() {
             </Select.Popover>
           </Select>
 
-          <div className="flex items-center justify-between">
-            <span className="text-sm">字幕（软字幕 WebVTT）</span>
-            <Switch
-              isSelected={settings.withSubtitle}
-              onChange={(v) => setSettings((s) => ({ ...s, withSubtitle: v }))}
-            />
-          </div>
+          <Switch
+            isSelected={settings.withSubtitle}
+            onChange={(v) => setSettings((s) => ({ ...s, withSubtitle: v }))}
+            className="flex w-full items-center justify-between"
+          >
+            <Switch.Content>
+              <Label className="text-sm font-normal">字幕（软字幕 WebVTT）</Label>
+            </Switch.Content>
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
+          </Switch>
 
-          <div className="flex items-center justify-between">
-            <span className="text-sm">首帧合成 (Nano Banana)</span>
-            <Switch
-              isSelected={settings.withReferenceFrames}
-              onChange={(v) => setSettings((s) => ({ ...s, withReferenceFrames: v }))}
-            />
-          </div>
+          <Switch
+            isSelected={settings.withReferenceFrames}
+            onChange={(v) => setSettings((s) => ({ ...s, withReferenceFrames: v }))}
+            className="flex w-full items-center justify-between"
+          >
+            <Switch.Content>
+              <Label className="text-sm font-normal">首帧合成 (Nano Banana)</Label>
+            </Switch.Content>
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
+          </Switch>
 
-          <div className="flex items-center justify-between">
-            <span className="text-sm">分镜衡接（串行抽尾帧）</span>
-            <Switch
-              isSelected={settings.chainFrames}
-              onChange={(v) => setSettings((s) => ({ ...s, chainFrames: v }))}
-            />
-          </div>
+          <Switch
+            isSelected={settings.chainFrames}
+            onChange={(v) => setSettings((s) => ({ ...s, chainFrames: v }))}
+            className="flex w-full items-center justify-between"
+          >
+            <Switch.Content>
+              <Label className="text-sm font-normal">分镜衔接（串行抽尾帧）</Label>
+            </Switch.Content>
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
+          </Switch>
 
-          <div className="flex items-center justify-between">
-            <span className="text-sm">完成后自动继续</span>
-            <Switch
-              isSelected={settings.autoContinue}
-              onChange={(v) => setSettings((s) => ({ ...s, autoContinue: v }))}
-            />
-          </div>
+          <Switch
+            isSelected={settings.autoContinue}
+            onChange={(v) => setSettings((s) => ({ ...s, autoContinue: v }))}
+            className="flex w-full items-center justify-between"
+          >
+            <Switch.Content>
+              <Label className="text-sm font-normal">完成后自动继续</Label>
+            </Switch.Content>
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
+          </Switch>
         </Card.Content>
       </Card>
 
@@ -578,7 +642,7 @@ export function ChatWorkspace() {
             value={input}
             onChange={(e) => setInput(e.currentTarget.value)}
             placeholder="粘贴或输入脚本，Ctrl+Enter 发送"
-            rows={3}
+            rows={6}
             className="flex-1"
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -588,7 +652,7 @@ export function ChatWorkspace() {
             }}
           />
           <Button variant="primary" onPress={submit} isDisabled={submitting || !input.trim()}>
-            {submitting ? <Spinner size="sm" /> : "提交"}
+            {submitting ? <Spinner size="sm" color="current" /> : "提交"}
           </Button>
         </div>
       </div>
