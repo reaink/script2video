@@ -1,0 +1,41 @@
+"use client";
+
+import Link from "next/link";
+import { useTheme } from "next-themes";
+import { Button } from "@heroui/react";
+import { useEffect, useState } from "react";
+
+export function Navbar() {
+  const { theme, setTheme, resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const next = () => {
+    const order = ["system", "light", "dark"] as const;
+    const cur = (theme ?? "system") as (typeof order)[number];
+    const i = order.indexOf(cur);
+    setTheme(order[(i + 1) % order.length]);
+  };
+
+  return (
+    <header className="sticky top-0 z-30 border-b border-default-200 bg-background/80 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
+        <Link href="/" className="flex items-center gap-2 font-semibold">
+          <span className="inline-block size-2 rounded-full bg-primary" />
+          Script2Video
+        </Link>
+        <nav className="flex items-center gap-2">
+          <Link href="/">
+            <Button variant="ghost" size="sm">首页</Button>
+          </Link>
+          <Link href="/settings">
+            <Button variant="ghost" size="sm">设置</Button>
+          </Link>
+          <Button variant="ghost" size="sm" onPress={next} aria-label="切换主题">
+            {mounted ? (theme === "system" ? "🖥️ 跟随" : resolvedTheme === "dark" ? "🌙 暗" : "☀️ 亮") : "🎨"}
+          </Button>
+        </nav>
+      </div>
+    </header>
+  );
+}
