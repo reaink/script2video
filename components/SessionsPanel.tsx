@@ -40,9 +40,8 @@ export function SessionsPanel() {
                 {sessions.map((s) => (
                   <div
                     key={s.id}
-                    className={`group flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-default-100 ${
-                      s.id === activeId ? "bg-default-100" : ""
-                    }`}
+                    className={`group flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-default-100 ${s.id === activeId ? "bg-default-100" : ""
+                      }`}
                   >
                     <button
                       type="button"
