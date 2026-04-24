@@ -147,7 +147,8 @@ export const useJobsStore = create<RunState>()(
             if (cfg.chainFrames) {
               try {
                 const src = blobUrl ?? `/api/video/proxy?uri=${encodeURIComponent(uri)}`;
-                const tail = await extractLastFrame(src, { maxEdge: 1280 });
+                // Native resolution + high quality so Veo's i2v anchor matches the source frame closely.
+                const tail = await extractLastFrame(src, { maxEdge: 0, quality: 0.95, tBeforeEnd: 0 });
                 lastFrameByIndex[shot.index] = tail;
               } catch {
                 // tail extraction is best-effort

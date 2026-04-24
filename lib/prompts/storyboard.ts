@@ -35,6 +35,8 @@ Given a script from the user, you must:
    - If hands or fingers appear, explicitly forbid obscene gestures: append "no middle finger, no offensive hand gestures" to the veoPrompt.
    - DIALOGUE CONTRACT (critical): if the shot has spoken lines, you MUST (a) populate the "dialogue" array with EXACT verbatim lines in the user-requested language (no translation, no paraphrase, no summarization), AND (b) end the veoPrompt with a sentence of the form: 'The {speaker} says in {LanguageName}: "<verbatim line>"' for EACH line, joined by ' Then '. Do NOT translate the quoted line into English. The quoted text inside veoPrompt must be byte-identical to the corresponding dialogue[i].line.
    - SUBTITLE CONTRACT: when subtitles are enabled, the 'subtitle' field MUST equal the dialogue lines joined by a single space, in the same language and verbatim. If there is no dialogue, leave subtitle empty.
+   - SPEECH TIMING (critical for concatenation): explicitly direct the speaker to begin talking within the first 0.3 seconds and finish before the last 0.5 seconds of the clip. Append phrases like "the speaker begins talking immediately, no opening pause" and "the line ends just before the clip ends, no trailing silence" to the veoPrompt when dialogue exists. This avoids dead air at shot boundaries.
+   - AUDIO CONTINUITY: keep ambiance and SFX subtle and consistent across all shots in this storyboard — same room tone family, same effect intensity. Avoid sudden loud impacts, music stings, or jarring effect changes unless the script explicitly demands them. Adjacent shots will be concatenated, so audio palettes must feel continuous.
 4. Honor the subtitle setting from the user. If subtitles are enabled, fill the "subtitle" field per shot in the script's original language; otherwise leave it empty.
 5. If the user attached reference images (1-based, in order), set "referenceImageIndex" on the shots that should visually anchor on a specific image. Use 0 (or omit) when none applies. Each image may be referenced by multiple shots.
 6. Output STRICT JSON matching the provided schema. No markdown, no commentary.`;
@@ -47,7 +49,9 @@ Critically audit the entire storyboard as a whole. Check and FIX:
 4. Subtitle/language consistency: subtitle text must be in the requested language and reasonable for the duration. The 'subtitle' MUST be the verbatim concatenation of dialogue[*].line (single space separator) in the requested language; do NOT translate or paraphrase.
 5. Dialogue↔Veo consistency: every dialogue[i].line must appear VERBATIM (byte-identical, including punctuation) inside the corresponding shot's veoPrompt, wrapped as 'The {speaker} says in {LanguageName}: "<line>"'. Reject any veoPrompt where the quoted speech is paraphrased or translated to English.
 6. Pacing balance: redistribute shots if the total duration feels off, or if any shot is too dense / too sparse.
-7. Forbidden content: ensure no shot describes obscene hand gestures.
+7. Speech timing: every shot with dialogue must instruct the speaker to begin within 0.3s and finish before the last 0.5s — verify these phrases ("begins talking immediately" / "no trailing silence" or equivalents) are present. Add them if missing.
+8. Audio continuity: ambiance and SFX must form a consistent palette across all shots — same room-tone character, similar effect intensity, no sudden loud impacts unless the script demands. Tone down or unify any outlier audio descriptions.
+9. Forbidden content: ensure no shot describes obscene hand gestures.
 Output the COMPLETE revised storyboard in STRICT JSON matching the same schema. No markdown, no commentary. Preserve detectedStyle and language unless they are clearly wrong.`;
 
 export interface BuildPromptArgs {

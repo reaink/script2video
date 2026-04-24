@@ -74,16 +74,6 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
       const blob = await exportConcatenated(readyShots, setExportProgress);
       const ext = blob.type.startsWith("video/mp4") ? "mp4" : "webm";
       downloadBlob(blob, `film.${ext}`);
-      // Also export merged SRT if any shot has subtitles
-      if (readyShots.some((s) => s.subtitle?.trim())) {
-        const srtShots = readyShots.map((s) => ({
-          index: s.index,
-          subtitle: s.subtitle,
-          durationSec: s.durationSec ?? 0,
-        }));
-        const srt = buildFullSrt(srtShots);
-        downloadBlob(new Blob([srt], { type: "text/srt" }), "film.srt");
-      }
     } finally {
       setExportProgress(null);
     }

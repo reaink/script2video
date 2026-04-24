@@ -60,6 +60,26 @@ function splitSentences(text: string): string[] {
   return parts.length > 0 ? parts : [text];
 }
 
+/**
+ * Apply linear fade-in and fade-out to the edges of an AudioBuffer in place.
+ * Smooths abrupt audio level jumps between concatenated shots.
+ */
+function applyEdgeFades(buf: AudioBuffer, seconds: number): void {
+  const fadeLen = Math.min(
+    Math.floor(seconds * buf.sampleRate),
+    Math.floor(buf.length / 2)
+  );
+  if (fadeLen <= 0) return;
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const data = buf.getChannelData(ch);
+    for (let i = 0; i < fadeLen; i++) {
+      const g = i / fadeLen;
+      data[i] *= g;
+      data[data.length - 1 - i] *= g;
+    }
+  }
+}
+
 function wrapText(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -204,6 +224,7 @@ export async function exportConcatenated(
       try {
         const ab = await blobs[i].arrayBuffer();
         const audioBuf = await audioCtx.decodeAudioData(ab);
+        applyEdgeFades(audioBuf, 0.08); // 80ms fade in/out smooths shot-to-shot joins
         audioSrc = audioCtx.createBufferSource();
         audioSrc.buffer = audioBuf;
         audioSrc.connect(gainNode);

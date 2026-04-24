@@ -41,9 +41,9 @@ export async function extractLastFrame(
   videoUrl: string,
   opts: { maxEdge?: number; quality?: number; tBeforeEnd?: number } = {}
 ): Promise<{ mimeType: string; bytesBase64Encoded: string }> {
-  const maxEdge = opts.maxEdge ?? 1280;
-  const quality = opts.quality ?? 0.85;
-  const tBeforeEnd = opts.tBeforeEnd ?? 0.05;
+  const maxEdge = opts.maxEdge ?? 0; // 0 = no downscale
+  const quality = opts.quality ?? 0.95;
+  const tBeforeEnd = opts.tBeforeEnd ?? 0;
 
   const video = document.createElement("video");
   video.crossOrigin = "anonymous";
@@ -57,21 +57,37 @@ export async function extractLastFrame(
     video.onerror = () => reject(new Error("video load failed"));
   });
 
-  // Seek to slightly before the end to avoid the rare blank-final-frame case.
-  const target = Math.max(0, (video.duration || 0) - tBeforeEnd);
+  // Seek to (or just before) the very end. Some encoders refuse exact-end seeks
+  // so back off by 1 frame (~33ms @ 30fps) only if seeking to end fails.
+  const dur = video.duration || 0;
+  const target = Math.max(0, dur - tBeforeEnd);
   await new Promise<void>((resolve, reject) => {
-    video.onseeked = () => resolve();
-    video.onerror = () => reject(new Error("video seek failed"));
+    let settled = false;
+    video.onseeked = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    video.onerror = () => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("video seek failed"));
+    };
     try {
       video.currentTime = target;
-    } catch (e) {
-      reject(e as Error);
+    } catch {
+      // Fallback: back off one frame
+      try {
+        video.currentTime = Math.max(0, dur - 0.034);
+      } catch (e) {
+        reject(e as Error);
+      }
     }
   });
 
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  const scale = Math.min(1, maxEdge / Math.max(vw, vh));
+  const scale = maxEdge > 0 ? Math.min(1, maxEdge / Math.max(vw, vh)) : 1;
   const w = Math.round(vw * scale);
   const h = Math.round(vh * scale);
 
