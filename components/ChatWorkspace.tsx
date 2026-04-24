@@ -50,12 +50,12 @@ interface UiSettings {
 const DEFAULT_SETTINGS: UiSettings = {
   aspectRatio: "16:9",
   durationSec: 8,
-  withSubtitle: false,
+  withSubtitle: true,
   withReferenceFrames: true,
-  chainFrames: false,
+  chainFrames: true,
   concurrency: 1,
   autoContinue: true,
-  language: "zh-CN",
+  language: "en-US",
 };
 
 function loadUiSettings(): UiSettings {
