@@ -12,9 +12,10 @@ import {
   TextArea,
   toast,
 } from "@heroui/react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Key } from "react";
 import type { GeminiModel, Storyboard } from "@/lib/types";
+import { JobsPanel } from "@/components/JobsPanel";
 
 type Models = { chat: GeminiModel[]; video: GeminiModel[]; image: GeminiModel[] };
 
@@ -60,26 +61,17 @@ function loadUiSettings(): UiSettings {
 export function ChatWorkspace() {
   const [models, setModels] = useState<Models | null>(null);
   const [loadingModels, setLoadingModels] = useState(true);
-  const [settings, setSettings] = useState<UiSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<UiSettings>(loadUiSettings);
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    setSettings(loadUiSettings());
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
-  useEffect(() => {
-    void refreshModels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const refreshModels = async () => {
+  const refreshModels = useCallback(async () => {
     setLoadingModels(true);
     try {
       const res = await fetch("/api/models");
@@ -97,7 +89,13 @@ export function ChatWorkspace() {
     } finally {
       setLoadingModels(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // Initial models fetch — async network call, not synchronous setState.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refreshModels();
+  }, [refreshModels]);
 
   const allowedDurations = useMemo<(4 | 5 | 6 | 8)[]>(() => {
     const m = settings.videoModel ?? "";
@@ -306,7 +304,22 @@ export function ChatWorkspace() {
               </div>
             )}
             {messages.map((m) => (
-              <MessageBubble key={m.id} msg={m} />
+              <MessageBubble
+                key={m.id}
+                msg={m}
+                videoModel={settings.videoModel}
+                imageModel={
+                  settings.withReferenceFrames
+                    ? models?.image.find((x) =>
+                        /(image-preview|nano-banana)/.test(x.name)
+                      )?.name
+                    : undefined
+                }
+                aspectRatio={settings.aspectRatio}
+                durationSec={settings.durationSec}
+                withReferenceFrames={settings.withReferenceFrames}
+                concurrency={settings.concurrency}
+              />
             ))}
             {submitting && (
               <div className="flex items-center gap-2 text-sm text-default-500">
@@ -339,7 +352,18 @@ export function ChatWorkspace() {
   );
 }
 
-function MessageBubble({ msg }: { msg: UiMessage }) {
+interface MessageBubbleProps {
+  msg: UiMessage;
+  videoModel?: string;
+  imageModel?: string;
+  aspectRatio: "16:9" | "9:16";
+  durationSec: 4 | 5 | 6 | 8;
+  withReferenceFrames: boolean;
+  concurrency: number;
+}
+
+function MessageBubble(props: MessageBubbleProps) {
+  const { msg } = props;
   if (msg.role === "user") {
     return (
       <div className="ml-auto max-w-[80%] rounded-2xl bg-primary px-4 py-2 text-primary-foreground">
@@ -350,12 +374,33 @@ function MessageBubble({ msg }: { msg: UiMessage }) {
   return (
     <div className="mr-auto w-full max-w-full">
       <div className="mb-2 rounded-2xl bg-default-100 px-4 py-2 text-sm">{msg.content}</div>
-      {msg.storyboard && <StoryboardView sb={msg.storyboard} />}
+      {msg.storyboard && (
+        <StoryboardView
+          sb={msg.storyboard}
+          videoModel={props.videoModel}
+          imageModel={props.imageModel}
+          aspectRatio={props.aspectRatio}
+          durationSec={props.durationSec}
+          withReferenceFrames={props.withReferenceFrames}
+          concurrency={props.concurrency}
+        />
+      )}
     </div>
   );
 }
 
-function StoryboardView({ sb }: { sb: Storyboard }) {
+interface StoryboardViewProps {
+  sb: Storyboard;
+  videoModel?: string;
+  imageModel?: string;
+  aspectRatio: "16:9" | "9:16";
+  durationSec: 4 | 5 | 6 | 8;
+  withReferenceFrames: boolean;
+  concurrency: number;
+}
+
+function StoryboardView(props: StoryboardViewProps) {
+  const { sb } = props;
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2 text-xs">
@@ -405,12 +450,21 @@ function StoryboardView({ sb }: { sb: Storyboard }) {
         ))}
       </div>
       <div className="flex gap-2">
-        <Button variant="primary" size="sm" isDisabled>
-          确认并生成视频（待实现）
-        </Button>
-        <Button variant="ghost" size="sm" isDisabled>
-          重新拆分
-        </Button>
+        {props.videoModel ? (
+          <JobsPanel
+            storyboard={sb}
+            videoModel={props.videoModel}
+            imageModel={props.imageModel}
+            aspectRatio={props.aspectRatio}
+            durationSec={props.durationSec}
+            withReferenceFrames={props.withReferenceFrames}
+            concurrency={props.concurrency}
+          />
+        ) : (
+          <Button variant="primary" size="sm" isDisabled>
+            请先选择视频模型
+          </Button>
+        )}
       </div>
     </div>
   );
