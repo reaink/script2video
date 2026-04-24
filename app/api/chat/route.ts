@@ -8,6 +8,12 @@ import {
   parseStoryboard,
 } from "@/lib/prompts/storyboard";
 
+interface RefImage {
+  name: string;
+  mimeType: string;
+  bytesBase64Encoded: string;
+}
+
 interface ChatBody {
   model: string;
   script: string;
@@ -16,7 +22,10 @@ interface ChatBody {
   withSubtitle: boolean;
   language?: string;
   history?: { role: "user" | "assistant"; content: string }[];
+  referenceImages?: RefImage[];
 }
+
+const MAX_REFERENCE_IMAGES = 3;
 
 export async function POST(req: Request) {
   let session;
@@ -30,20 +39,32 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing model or script" }, { status: 400 });
   }
 
+  const refs = (body.referenceImages ?? []).slice(0, MAX_REFERENCE_IMAGES);
+
   const userText = buildStoryboardUserPrompt({
     script: body.script,
     durationSec: body.durationSec,
     aspectRatio: body.aspectRatio,
     withSubtitle: body.withSubtitle,
     language: body.language,
+    referenceImageNames: refs.map((r) => r.name),
   });
+
+  const userParts: Array<
+    { text: string } | { inlineData: { mimeType: string; data: string } }
+  > = [{ text: userText }];
+  for (const r of refs) {
+    userParts.push({
+      inlineData: { mimeType: r.mimeType, data: r.bytesBase64Encoded },
+    });
+  }
 
   const contents = [
     ...(body.history ?? []).map((h) => ({
       role: h.role === "assistant" ? "model" : "user",
       parts: [{ text: h.content }],
     })),
-    { role: "user", parts: [{ text: userText }] },
+    { role: "user", parts: userParts },
   ];
 
   try {

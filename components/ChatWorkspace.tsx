@@ -12,12 +12,18 @@ import {
   TextArea,
   toast,
 } from "@heroui/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Key } from "react";
-import type { GeminiModel, Storyboard } from "@/lib/types";
+import { compressImage } from "@/lib/client/media";
+import { useJobsStore } from "@/lib/stores/jobs";
+import { useSessionsStore } from "@/lib/stores/sessions";
 import { JobsPanel } from "@/components/JobsPanel";
+import { SessionsPanel } from "@/components/SessionsPanel";
+import type { GeminiModel, ReferenceImage, Storyboard } from "@/lib/types";
 
 type Models = { chat: GeminiModel[]; video: GeminiModel[]; image: GeminiModel[] };
+
+const MAX_REFERENCE_IMAGES = 3;
 
 interface UiMessage {
   id: string;
@@ -34,6 +40,8 @@ interface UiSettings {
   durationSec: 4 | 5 | 6 | 8;
   withSubtitle: boolean;
   withReferenceFrames: boolean;
+  /** Sequential mode: chain previous shot's last frame as next shot's first frame. */
+  chainFrames: boolean;
   concurrency: number;
   autoContinue: boolean;
   language: string;
@@ -43,6 +51,7 @@ const DEFAULT_SETTINGS: UiSettings = {
   durationSec: 8,
   withSubtitle: false,
   withReferenceFrames: true,
+  chainFrames: false,
   concurrency: 1,
   autoContinue: true,
   language: "zh-CN",
@@ -58,6 +67,13 @@ function loadUiSettings(): UiSettings {
   }
 }
 
+function deriveSessionTitle(messages: UiMessage[]): string {
+  const first = messages.find((m) => m.role === "user");
+  if (!first) return "新会话";
+  const t = first.content.trim().split(/\s+/).slice(0, 6).join(" ");
+  return t.length > 40 ? `${t.slice(0, 40)}…` : t || "新会话";
+}
+
 export function ChatWorkspace() {
   const [models, setModels] = useState<Models | null>(null);
   const [loadingModels, setLoadingModels] = useState(true);
@@ -65,6 +81,67 @@ export function ChatWorkspace() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [refImages, setRefImages] = useState<ReferenceImage[]>([]);
+  const startJobs = useJobsStore((s) => s.start);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const sessionsLoaded = useSessionsStore((s) => s.loaded);
+  const sessionsList = useSessionsStore((s) => s.sessions);
+  const activeId = useSessionsStore((s) => s.activeId);
+  const loadSessions = useSessionsStore((s) => s.load);
+  const newSession = useSessionsStore((s) => s.newSession);
+  const saveActive = useSessionsStore((s) => s.saveActive);
+  /** Tracks the id we last hydrated from to avoid clobbering pending edits. */
+  const hydratedIdRef = useRef<string | null>(null);
+
+  // Boot sessions: load IDB, ensure there is at least one active session.
+  useEffect(() => {
+    void loadSessions();
+  }, [loadSessions]);
+
+  useEffect(() => {
+    if (!sessionsLoaded) return;
+    if (!activeId) {
+      // Will trigger the hydrate effect below on the next tick.
+      newSession();
+    }
+  }, [sessionsLoaded, activeId, newSession]);
+
+  // Hydrate UI when the active session id flips (e.g. user picks from sidebar).
+  useEffect(() => {
+    if (!activeId || hydratedIdRef.current === activeId) return;
+    const rec = sessionsList.find((s) => s.id === activeId);
+    if (!rec) return;
+    hydratedIdRef.current = activeId;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMessages(
+      rec.messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        storyboard: m.storyboard,
+      }))
+    );
+    setRefImages(rec.refImages);
+  }, [activeId, sessionsList]);
+
+  // Persist edits back to IDB. Debounced via a microtask-batched effect.
+  useEffect(() => {
+    if (!activeId || hydratedIdRef.current !== activeId) return;
+    const handle = window.setTimeout(() => {
+      void saveActive({
+        title: deriveSessionTitle(messages),
+        messages: messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          storyboard: m.storyboard,
+        })),
+        refImages,
+      });
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [messages, refImages, activeId, saveActive]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -76,7 +153,7 @@ export function ChatWorkspace() {
     try {
       const res = await fetch("/api/models");
       if (!res.ok) {
-        toast.danger("无法拉取模型，请检查 Key");
+        toast.danger("\u65e0\u6cd5\u62c9\u53d6\u6a21\u578b\uff0c\u8bf7\u68c0\u67e5 Key");
         return;
       }
       const d = (await res.json()) as Models;
@@ -92,7 +169,6 @@ export function ChatWorkspace() {
   }, []);
 
   useEffect(() => {
-    // Initial models fetch — async network call, not synchronous setState.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshModels();
   }, [refreshModels]);
@@ -104,11 +180,42 @@ export function ChatWorkspace() {
     return [4, 6, 8];
   }, [settings.videoModel]);
 
+  const pickedImageModel = useMemo(
+    () => models?.image.find((x) => /(image-preview|nano-banana)/.test(x.name))?.name,
+    [models]
+  );
+
+  const onPickFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      const remaining = MAX_REFERENCE_IMAGES - refImages.length;
+      if (remaining <= 0) {
+        toast.warning(`\u6700\u591a\u4e0a\u4f20 ${MAX_REFERENCE_IMAGES} \u5f20\u53c2\u8003\u56fe`);
+        return;
+      }
+      const toAdd = Array.from(files).slice(0, remaining);
+      const out: ReferenceImage[] = [];
+      for (const f of toAdd) {
+        try {
+          const c = await compressImage(f);
+          out.push({ id: crypto.randomUUID(), name: f.name, ...c });
+        } catch {
+          toast.danger(`\u538b\u7f29\u5931\u8d25: ${f.name}`);
+        }
+      }
+      setRefImages((prev) => [...prev, ...out]);
+    },
+    [refImages.length]
+  );
+
+  const removeRefImage = (id: string) =>
+    setRefImages((prev) => prev.filter((r) => r.id !== id));
+
   const submit = async () => {
     const script = input.trim();
     if (!script) return;
     if (!settings.chatModel) {
-      toast.warning("请先选择对话模型");
+      toast.warning("\u8bf7\u5148\u9009\u62e9\u5bf9\u8bdd\u6a21\u578b");
       return;
     }
     const userMsg: UiMessage = {
@@ -131,14 +238,19 @@ export function ChatWorkspace() {
           withSubtitle: settings.withSubtitle,
           language: settings.language,
           history: messages.map((m) => ({ role: m.role, content: m.content })),
+          referenceImages: refImages.map((r) => ({
+            name: r.name,
+            mimeType: r.mimeType,
+            bytesBase64Encoded: r.bytesBase64Encoded,
+          })),
         }),
       });
       const d = await res.json();
       if (!res.ok) {
-        toast.danger("拆分失败", { description: d.error });
+        toast.danger("\u62c6\u5206\u5931\u8d25", { description: d.error });
         setMessages((m) => [
           ...m,
-          { id: crypto.randomUUID(), role: "assistant", content: `❌ ${d.error}` },
+          { id: crypto.randomUUID(), role: "assistant", content: `\u274c ${d.error}` },
         ]);
         return;
       }
@@ -147,15 +259,33 @@ export function ChatWorkspace() {
         {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `已拆分 ${d.storyboard.shots.length} 个分镜`,
+          content: `\u5df2\u62c6\u5206 ${d.storyboard.shots.length} \u4e2a\u5206\u955c`,
           storyboard: d.storyboard as Storyboard,
         },
       ]);
     } catch (e) {
-      toast.danger("网络错误", { description: String(e) });
+      toast.danger("\u7f51\u7edc\u9519\u8bef", { description: String(e) });
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const startGeneration = (sb: Storyboard) => {
+    if (!settings.videoModel) {
+      toast.warning("\u8bf7\u9009\u62e9\u89c6\u9891\u6a21\u578b");
+      return;
+    }
+    void startJobs(sb.shots, {
+      videoModel: settings.videoModel,
+      imageModel: settings.withReferenceFrames ? pickedImageModel : undefined,
+      aspectRatio: settings.aspectRatio,
+      durationSec: settings.durationSec,
+      withReferenceFrames: settings.withReferenceFrames,
+      chainFrames: settings.chainFrames,
+      concurrency: settings.chainFrames ? 1 : settings.concurrency,
+      detectedStyle: sb.detectedStyle,
+      referenceImages: refImages,
+    });
   };
 
   const setSelected = <K extends keyof UiSettings>(key: K) =>
@@ -259,7 +389,7 @@ export function ChatWorkspace() {
             <Select.Popover>
               <ListBox>
                 {allowedDurations.map((d) => (
-                  <ListBox.Item key={d} id={String(d)} textValue={`${d} 秒`}>
+                  <ListBox.Item key={d} id={String(d)} textValue={`${d} \u79d2`}>
                     {d} 秒
                     <ListBox.ItemIndicator />
                   </ListBox.Item>
@@ -277,10 +407,18 @@ export function ChatWorkspace() {
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-sm">分镜首尾帧衔接 (Nano Banana)</span>
+            <span className="text-sm">首帧合成 (Nano Banana)</span>
             <Switch
               isSelected={settings.withReferenceFrames}
               onChange={(v) => setSettings((s) => ({ ...s, withReferenceFrames: v }))}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-sm">分镜衡接（串行抽尾帧）</span>
+            <Switch
+              isSelected={settings.chainFrames}
+              onChange={(v) => setSettings((s) => ({ ...s, chainFrames: v }))}
             />
           </div>
 
@@ -296,6 +434,10 @@ export function ChatWorkspace() {
 
       {/* 右：聊天区 */}
       <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <SessionsPanel />
+          <JobsPanel />
+        </div>
         <Card className="flex-1 overflow-hidden">
           <Card.Content className="flex h-full flex-col gap-3 overflow-y-auto p-4">
             {messages.length === 0 && (
@@ -307,18 +449,8 @@ export function ChatWorkspace() {
               <MessageBubble
                 key={m.id}
                 msg={m}
-                videoModel={settings.videoModel}
-                imageModel={
-                  settings.withReferenceFrames
-                    ? models?.image.find((x) =>
-                        /(image-preview|nano-banana)/.test(x.name)
-                      )?.name
-                    : undefined
-                }
-                aspectRatio={settings.aspectRatio}
-                durationSec={settings.durationSec}
-                withReferenceFrames={settings.withReferenceFrames}
-                concurrency={settings.concurrency}
+                refCount={refImages.length}
+                onStart={startGeneration}
               />
             ))}
             {submitting && (
@@ -329,7 +461,51 @@ export function ChatWorkspace() {
           </Card.Content>
         </Card>
 
+        {refImages.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {refImages.map((r, i) => (
+              <div key={r.id} className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`data:${r.mimeType};base64,${r.bytesBase64Encoded}`}
+                  alt={r.name}
+                  className="h-16 w-16 rounded-md border border-default-200 object-cover"
+                />
+                <span className="absolute -left-1 -top-1 rounded-full bg-primary px-1.5 text-[10px] text-primary-foreground">
+                  {i + 1}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeRefImage(r.id)}
+                  className="absolute -right-1 -top-1 rounded-full bg-default-900/80 px-1.5 text-[10px] text-white"
+                  aria-label="移除"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              void onPickFiles(e.currentTarget.files);
+              e.currentTarget.value = "";
+            }}
+          />
+          <Button
+            variant="outline"
+            onPress={() => fileInputRef.current?.click()}
+            isDisabled={refImages.length >= MAX_REFERENCE_IMAGES}
+          >
+            上传参考 {refImages.length}/{MAX_REFERENCE_IMAGES}
+          </Button>
           <TextArea
             value={input}
             onChange={(e) => setInput(e.currentTarget.value)}
@@ -352,18 +528,15 @@ export function ChatWorkspace() {
   );
 }
 
-interface MessageBubbleProps {
+function MessageBubble({
+  msg,
+  refCount,
+  onStart,
+}: {
   msg: UiMessage;
-  videoModel?: string;
-  imageModel?: string;
-  aspectRatio: "16:9" | "9:16";
-  durationSec: 4 | 5 | 6 | 8;
-  withReferenceFrames: boolean;
-  concurrency: number;
-}
-
-function MessageBubble(props: MessageBubbleProps) {
-  const { msg } = props;
+  refCount: number;
+  onStart: (sb: Storyboard) => void;
+}) {
   if (msg.role === "user") {
     return (
       <div className="ml-auto max-w-[80%] rounded-2xl bg-primary px-4 py-2 text-primary-foreground">
@@ -375,59 +548,56 @@ function MessageBubble(props: MessageBubbleProps) {
     <div className="mr-auto w-full max-w-full">
       <div className="mb-2 rounded-2xl bg-default-100 px-4 py-2 text-sm">{msg.content}</div>
       {msg.storyboard && (
-        <StoryboardView
-          sb={msg.storyboard}
-          videoModel={props.videoModel}
-          imageModel={props.imageModel}
-          aspectRatio={props.aspectRatio}
-          durationSec={props.durationSec}
-          withReferenceFrames={props.withReferenceFrames}
-          concurrency={props.concurrency}
-        />
+        <StoryboardView sb={msg.storyboard} refCount={refCount} onStart={onStart} />
       )}
     </div>
   );
 }
 
-interface StoryboardViewProps {
+function StoryboardView({
+  sb,
+  refCount,
+  onStart,
+}: {
   sb: Storyboard;
-  videoModel?: string;
-  imageModel?: string;
-  aspectRatio: "16:9" | "9:16";
-  durationSec: 4 | 5 | 6 | 8;
-  withReferenceFrames: boolean;
-  concurrency: number;
-}
-
-function StoryboardView(props: StoryboardViewProps) {
-  const { sb } = props;
+  refCount: number;
+  onStart: (sb: Storyboard) => void;
+}) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex flex-wrap gap-2 text-xs">
-        <Chip color="accent" variant="soft">
+        <Chip variant="soft" color="accent">
           风格：{sb.detectedStyle}
         </Chip>
         <Chip variant="soft">语言：{sb.language}</Chip>
         <Chip variant="soft">总时长：{sb.totalDurationSec}s</Chip>
         <Chip variant="soft">分镜数：{sb.shots.length}</Chip>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {sb.shots.map((s) => (
-          <Card key={s.index} className="w-72 shrink-0">
-            <Card.Content className="space-y-2 p-4 text-xs">
+          <Card key={s.index} className="w-full">
+            <Card.Content className="space-y-3 p-4 text-sm">
               <div className="flex items-center justify-between">
-                <span className="font-semibold">#{s.index}</span>
-                <Chip size="sm">{s.durationSec}s</Chip>
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-semibold">#{s.index}</span>
+                  <Chip size="sm" variant="soft">{s.durationSec}s</Chip>
+                  {s.referenceImageIndex && s.referenceImageIndex > 0 && refCount > 0 && (
+                    <Chip size="sm" color="accent" variant="soft">
+                      参考图 #{s.referenceImageIndex}
+                    </Chip>
+                  )}
+                </div>
               </div>
               <div className="text-default-700">{s.summary}</div>
-              <details>
-                <summary className="cursor-pointer text-default-500">Veo Prompt</summary>
-                <pre className="mt-1 whitespace-pre-wrap text-[11px] text-default-600">
-                  {s.veoPrompt}
-                </pre>
-              </details>
+              <div className="grid grid-cols-1 gap-2 text-xs text-default-600 sm:grid-cols-2">
+                <div><span className="text-default-500">镜头：</span>{s.camera}</div>
+                <div><span className="text-default-500">构图：</span>{s.composition}</div>
+                <div className="sm:col-span-2">
+                  <span className="text-default-500">氛围：</span>{s.ambiance}
+                </div>
+              </div>
               {s.dialogue.length > 0 && (
-                <div>
+                <div className="text-xs">
                   <div className="text-default-500">对话</div>
                   {s.dialogue.map((d, i) => (
                     <div key={i}>
@@ -437,35 +607,29 @@ function StoryboardView(props: StoryboardViewProps) {
                 </div>
               )}
               {s.subtitle && (
-                <div>
-                  <div className="text-default-500">字幕</div>
-                  <div>{s.subtitle}</div>
+                <div className="text-xs">
+                  <span className="text-default-500">字幕：</span>{s.subtitle}
                 </div>
               )}
               {s.continuityHint && (
-                <div className="text-default-500">衔接：{s.continuityHint}</div>
+                <div className="text-xs text-default-500">衡接：{s.continuityHint}</div>
               )}
+              <details>
+                <summary className="cursor-pointer text-xs text-default-500">Veo Prompt</summary>
+                <pre className="mt-1 whitespace-pre-wrap text-xs text-default-600">
+                  {s.veoPrompt}
+                </pre>
+              </details>
             </Card.Content>
           </Card>
         ))}
       </div>
       <div className="flex gap-2">
-        {props.videoModel ? (
-          <JobsPanel
-            storyboard={sb}
-            videoModel={props.videoModel}
-            imageModel={props.imageModel}
-            aspectRatio={props.aspectRatio}
-            durationSec={props.durationSec}
-            withReferenceFrames={props.withReferenceFrames}
-            concurrency={props.concurrency}
-          />
-        ) : (
-          <Button variant="primary" size="sm" isDisabled>
-            请先选择视频模型
-          </Button>
-        )}
+        <Button variant="primary" size="sm" onPress={() => onStart(sb)}>
+          确认并生成视频
+        </Button>
       </div>
     </div>
   );
 }
+

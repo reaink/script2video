@@ -50,6 +50,20 @@ export interface Shot {
   ambiance: string;
   subtitle?: string;
   continuityHint?: string;
+  /** 1-based index into the user's uploaded reference images, or 0 if none. */
+  referenceImageIndex?: number;
+}
+
+export interface ReferenceImage {
+  /** Stable id for ui list keys. */
+  id: string;
+  /** Original file name, for the prompt context. */
+  name: string;
+  mimeType: string;
+  /** Base64-encoded bytes (no data: prefix). */
+  bytesBase64Encoded: string;
+  /** Compressed size in bytes after client-side downscale. */
+  size: number;
 }
 
 export interface Storyboard {
@@ -85,6 +99,8 @@ export interface ShotJob {
   status: ShotJobStatus;
   operationName?: string;
   videoUri?: string;
+  /** Object URL pointing to the cached blob in IndexedDB. Survives Veo's 2-day expiry. */
+  videoBlobUrl?: string;
   error?: string;
   startedAt?: number;
   finishedAt?: number;

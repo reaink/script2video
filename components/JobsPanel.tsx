@@ -1,106 +1,123 @@
 "use client";
 
 import { Button, Card, Chip, Drawer, Spinner, useOverlayState } from "@heroui/react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useJobsStore } from "@/lib/stores/jobs";
-import type { JobConfig } from "@/lib/stores/jobs";
-import type { Shot, Storyboard } from "@/lib/types";
+import { getCachedVideoUrl } from "@/lib/db/videoCache";
+import { buildShotVtt, vttToDataUrl } from "@/lib/utils/vtt";
+import type { Shot } from "@/lib/types";
 
 interface Props {
-  storyboard: Storyboard;
-  videoModel: string;
-  imageModel?: string;
-  aspectRatio: "16:9" | "9:16";
-  durationSec: 4 | 5 | 6 | 8;
-  withReferenceFrames: boolean;
-  concurrency: number;
+  triggerLabel?: string;
 }
 
-export function JobsPanel(props: Props) {
-  const state = useOverlayState();
-  const { jobs, running, shots, start, cancel, reset, retry } = useJobsStore();
+const STATUS_LABEL: Record<string, string> = {
+  queued: "排队中",
+  running: "生成中",
+  done: "完成",
+  failed: "失败",
+};
 
-  const cfg: JobConfig = useMemo(
-    () => ({
-      videoModel: props.videoModel,
-      imageModel: props.imageModel,
-      aspectRatio: props.aspectRatio,
-      durationSec: props.durationSec,
-      withReferenceFrames: props.withReferenceFrames,
-      concurrency: props.concurrency,
-      detectedStyle: props.storyboard.detectedStyle,
-    }),
-    [props]
-  );
+const STATUS_COLOR: Record<string, "default" | "accent" | "success" | "warning" | "danger"> = {
+  queued: "default",
+  running: "accent",
+  done: "success",
+  failed: "danger",
+};
 
-  const runHere = props.storyboard.shots === shots && Object.keys(jobs).length > 0;
-  const stats = useMemo(() => {
-    const list = Object.values(jobs);
-    return {
-      total: list.length,
-      done: list.filter((j) => j.status === "done").length,
-      failed: list.filter((j) => j.status === "failed").length,
-      running: list.filter((j) => j.status === "running").length,
-    };
-  }, [jobs]);
+export function JobsPanel({ triggerLabel = "查看生成进度" }: Props) {
+  const overlay = useOverlayState();
+  const jobs = useJobsStore((s) => s.jobs);
+  const shots = useJobsStore((s) => s.shots);
+  const running = useJobsStore((s) => s.running);
+  const cancel = useJobsStore((s) => s.cancel);
+  const retry = useJobsStore((s) => s.retry);
+  const reset = useJobsStore((s) => s.reset);
 
-  const onStart = async () => {
-    state.open();
-    await start(props.storyboard.shots, cfg);
-  };
+  const total = shots.length;
+  const done = shots.filter((s) => jobs[s.index]?.status === "done").length;
+  const failed = shots.filter((s) => jobs[s.index]?.status === "failed").length;
+
+  // Auto-open when a run starts.
+  useEffect(() => {
+    if (running && !overlay.isOpen) overlay.open();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running]);
 
   return (
     <>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="primary" size="sm" onPress={onStart} isDisabled={running}>
-          {running ? <Spinner size="sm" /> : "确认并生成视频"}
-        </Button>
-        {runHere && (
-          <Button variant="ghost" size="sm" onPress={() => state.open()}>
-            查看进度（{stats.done}/{stats.total}）
-          </Button>
+      <Button variant="outline" size="sm" onPress={overlay.open} isDisabled={total === 0}>
+        {triggerLabel}
+        {total > 0 && (
+          <Chip size="sm" variant="soft" className="ml-2">
+            {done}/{total}
+          </Chip>
         )}
-      </div>
-
-      <Drawer state={state}>
+      </Button>
+      <Drawer state={overlay}>
         <Drawer.Backdrop>
-          <Drawer.Content placement="right" className="w-full max-w-3xl">
+          <Drawer.Content placement="right" className="w-full max-w-xl">
             <Drawer.Dialog>
-              <Drawer.Header className="flex items-center justify-between p-4">
-                <Drawer.Heading className="text-lg font-semibold">视频生成进度</Drawer.Heading>
-                <div className="flex items-center gap-2 text-xs text-default-500">
-                  <Chip size="sm">完成 {stats.done}</Chip>
-                  <Chip size="sm" color="warning">
-                    进行中 {stats.running}
-                  </Chip>
-                  {stats.failed > 0 && (
-                    <Chip size="sm" color="danger">
-                      失败 {stats.failed}
-                    </Chip>
-                  )}
+              <Drawer.Header>
+                <div className="flex w-full items-center justify-between">
+                  <h3 className="text-base font-semibold">生成进度</h3>
+                  <Drawer.CloseTrigger />
                 </div>
               </Drawer.Header>
-              <Drawer.Body className="space-y-3 p-4">
-                {(runHere ? shots : props.storyboard.shots).map((s) => (
-                  <ShotJobCard key={s.index} shot={s} onRetry={() => retry(s.index)} />
-                ))}
-              </Drawer.Body>
-              <Drawer.Footer className="flex justify-between gap-2 p-4">
-                <Button variant="ghost" size="sm" onPress={reset} isDisabled={running}>
-                  清空
-                </Button>
-                <div className="flex gap-2">
-                  {running && (
-                    <Button variant="danger" size="sm" onPress={cancel}>
-                      取消
-                    </Button>
+              <Drawer.Body className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <Chip variant="soft">总数 {total}</Chip>
+                  <Chip variant="soft" color="success">完成 {done}</Chip>
+                  {failed > 0 && (
+                    <Chip variant="soft" color="danger">失败 {failed}</Chip>
                   )}
-                  <Drawer.CloseTrigger>
-                    <Button variant="ghost" size="sm">
-                      关闭
-                    </Button>
-                  </Drawer.CloseTrigger>
+                  {running && <Spinner size="sm" />}
                 </div>
+                {shots.map((s) => {
+                  const job = jobs[s.index];
+                  const status = job?.status ?? "queued";
+                  return (
+                    <Card key={s.index}>
+                      <Card.Content className="space-y-2 p-4 text-sm">
+                        <div className="flex items-center justify-between">
+                          <div className="font-semibold">
+                            #{s.index} · {s.durationSec}s
+                          </div>
+                          <Chip size="sm" color={STATUS_COLOR[status]} variant="soft">
+                            {STATUS_LABEL[status]}
+                          </Chip>
+                        </div>
+                        <div className="text-default-600">{s.summary}</div>
+                        {job?.error && (
+                          <div className="text-danger">错误：{job.error}</div>
+                        )}
+                        {job?.videoUri && (
+                          <ShotPlayer
+                            shot={s}
+                            videoUri={job.videoUri}
+                            blobUrl={job.videoBlobUrl}
+                          />
+                        )}
+                        {status === "failed" && (
+                          <Button size="sm" variant="ghost" onPress={() => retry(s.index)}>
+                            重试
+                          </Button>
+                        )}
+                      </Card.Content>
+                    </Card>
+                  );
+                })}
+              </Drawer.Body>
+              <Drawer.Footer>
+                {running ? (
+                  <Button variant="danger" onPress={cancel}>
+                    取消
+                  </Button>
+                ) : (
+                  <Button variant="ghost" onPress={reset} isDisabled={total === 0}>
+                    清空
+                  </Button>
+                )}
               </Drawer.Footer>
             </Drawer.Dialog>
           </Drawer.Content>
@@ -110,70 +127,102 @@ export function JobsPanel(props: Props) {
   );
 }
 
-function ShotJobCard({ shot, onRetry }: { shot: Shot; onRetry: () => void }) {
-  const job = useJobsStore((s) => s.jobs[shot.index]);
-  const status = job?.status ?? "queued";
+function ShotPlayer({
+  shot,
+  videoUri,
+  blobUrl,
+}: {
+  shot: Shot;
+  videoUri: string;
+  blobUrl?: string;
+}) {
+  // Try the IDB cache first; fall back to the live proxy if Veo's URI is still fresh.
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(blobUrl ?? null);
+  const [restoring, setRestoring] = useState<boolean>(!blobUrl);
+  const [hasCache, setHasCache] = useState<boolean>(Boolean(blobUrl));
+
+  useEffect(() => {
+    if (blobUrl) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setResolvedUrl(blobUrl);
+      setHasCache(true);
+      setRestoring(false);
+      return;
+    }
+    let revoked: string | null = null;
+    setRestoring(true);
+    void (async () => {
+      try {
+        const cached = await getCachedVideoUrl(videoUri);
+        if (cached) {
+          revoked = cached;
+          setResolvedUrl(cached);
+          setHasCache(true);
+        } else {
+          setResolvedUrl(`/api/video/proxy?uri=${encodeURIComponent(videoUri)}`);
+          setHasCache(false);
+        }
+      } finally {
+        setRestoring(false);
+      }
+    })();
+    return () => {
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [videoUri, blobUrl]);
+
+  const vttUrl = useMemo(() => {
+    const vtt = buildShotVtt(shot);
+    return vtt ? vttToDataUrl(vtt) : null;
+  }, [shot]);
+
+  if (restoring && !resolvedUrl) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-default-500">
+        <Spinner size="sm" /> 加载缓存…
+      </div>
+    );
+  }
+
   return (
-    <Card>
-      <Card.Content className="space-y-2 p-4">
-        <div className="flex items-center justify-between">
-          <div className="font-semibold">
-            #{shot.index} · {shot.summary}
-          </div>
-          <StatusChip status={status} />
-        </div>
-        {job?.error && <div className="text-xs text-danger">{job.error}</div>}
-        {status === "done" && job?.videoUri && (
-          <div className="space-y-2">
-            <video
-              controls
-              className="w-full rounded-lg"
-              src={`/api/video/proxy?uri=${encodeURIComponent(job.videoUri)}`}
-            />
-            <a
-              href={`/api/video/proxy?uri=${encodeURIComponent(job.videoUri)}&download=1`}
-              download={`shot-${shot.index}.mp4`}
-              className="text-xs text-primary underline"
-            >
-              下载 MP4
-            </a>
-          </div>
+    <div className="space-y-2">
+      <video
+        controls
+        className="w-full rounded-md bg-black"
+        crossOrigin="anonymous"
+        src={resolvedUrl ?? undefined}
+      >
+        {vttUrl && (
+          <track
+            kind="subtitles"
+            src={vttUrl}
+            srcLang={inferLang(shot.subtitle)}
+            label="字幕"
+            default
+          />
         )}
-        {status === "failed" && (
-          <Button variant="ghost" size="sm" onPress={onRetry}>
-            重试
-          </Button>
+      </video>
+      <div className="flex flex-wrap gap-3 text-xs">
+        <a
+          className="text-primary underline"
+          href={`/api/video/proxy?uri=${encodeURIComponent(videoUri)}&download=1`}
+        >
+          下载 mp4
+        </a>
+        {vttUrl && (
+          <a className="text-primary underline" href={vttUrl} download={`shot-${shot.index}.vtt`}>
+            下载 vtt
+          </a>
         )}
-        {status === "running" && (
-          <div className="flex items-center gap-2 text-xs text-default-500">
-            <Spinner size="sm" /> Veo 生成中...（约 1-3 分钟）
-          </div>
-        )}
-      </Card.Content>
-    </Card>
+        <span className={hasCache ? "text-success" : "text-warning"}>
+          {hasCache ? "已缓存" : "未缓存（实时代理）"}
+        </span>
+      </div>
+    </div>
   );
 }
 
-function StatusChip({ status }: { status: string }) {
-  const color =
-    status === "done"
-      ? "success"
-      : status === "failed"
-        ? "danger"
-        : status === "running"
-          ? "warning"
-          : "default";
-  const label =
-    status === "done"
-      ? "完成"
-      : status === "failed"
-        ? "失败"
-        : status === "running"
-          ? "进行中"
-          : "排队";
-  return (
-    <Chip size="sm" color={color as "success" | "danger" | "warning" | "default"}>
-      {label}
-    </Chip>
-  );
+function inferLang(text: string | undefined): string {
+  if (!text) return "und";
+  return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
 }

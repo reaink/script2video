@@ -6,7 +6,8 @@ Given a script from the user, you must:
 2. Split the script into shots whose individual durations match the target clip length (the user will provide it). Keep each shot self-contained, dense, and ensure adjacent shots transition naturally (continuityHint).
 3. Each shot must include a complete English Veo prompt: subject, action, style, camera motion, composition, focus, ambiance, and any audio cues / dialogue in quotes.
 4. Honor the subtitle setting from the user. If subtitles are enabled, fill the "subtitle" field per shot in the script's original language; otherwise leave it empty.
-5. Output STRICT JSON matching the provided schema. No markdown, no commentary.`;
+5. If the user attached reference images (1-based, in order), set "referenceImageIndex" on the shots that should visually anchor on a specific image. Use 0 (or omit) when none applies. Each image may be referenced by multiple shots.
+6. Output STRICT JSON matching the provided schema. No markdown, no commentary.`;
 
 export interface BuildPromptArgs {
   script: string;
@@ -15,14 +16,22 @@ export interface BuildPromptArgs {
   withSubtitle: boolean;
   language?: string;
   history?: { role: "user" | "assistant"; text: string }[];
+  referenceImageNames?: string[];
 }
 
 export function buildStoryboardUserPrompt(args: BuildPromptArgs): string {
+  const refLine =
+    args.referenceImageNames && args.referenceImageNames.length > 0
+      ? `Reference images attached (1-based): ${args.referenceImageNames
+        .map((n, i) => `${i + 1}. ${n}`)
+        .join(" | ")}. Set referenceImageIndex on relevant shots.`
+      : ``;
   return [
     `Target clip duration per shot: ${args.durationSec} seconds (each shot's durationSec MUST equal this).`,
     `Aspect ratio: ${args.aspectRatio}.`,
     `Subtitles: ${args.withSubtitle ? "ENABLED — fill 'subtitle' per shot." : "DISABLED — leave 'subtitle' empty."}`,
     args.language ? `Output dialogue/subtitle language: ${args.language}.` : ``,
+    refLine,
     ``,
     `=== SCRIPT ===`,
     args.script,
@@ -76,6 +85,7 @@ export const STORYBOARD_RESPONSE_SCHEMA = {
           ambiance: { type: "string" },
           subtitle: { type: "string" },
           continuityHint: { type: "string" },
+          referenceImageIndex: { type: "integer" },
         },
       },
     },

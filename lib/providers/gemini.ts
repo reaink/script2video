@@ -76,7 +76,7 @@ export async function startVeoOperation(args: StartVeoArgs): Promise<{ name: str
   if (args.lastFrame) instances.lastFrame = args.lastFrame;
   const parameters: Record<string, unknown> = {
     aspectRatio: args.aspectRatio,
-    durationSeconds: String(args.durationSeconds),
+    durationSeconds: Number(args.durationSeconds),
   };
   if (args.resolution) parameters.resolution = args.resolution;
   if (args.personGeneration) parameters.personGeneration = args.personGeneration;
@@ -118,4 +118,43 @@ export async function downloadVideoStream(apiKey: string, uri: string): Promise<
   const u = new URL(uri);
   // Some Veo URIs already include alt=media; ensure key header is sent.
   return fetch(u, { headers: { "x-goog-api-key": apiKey } });
+}
+
+export interface PredictImageArgs {
+  apiKey: string;
+  model: string; // e.g. "imagen-4.0-generate-001"
+  prompt: string;
+  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+  sampleCount?: number;
+}
+
+export interface PredictImageResult {
+  bytesBase64Encoded: string;
+  mimeType: string;
+}
+
+export async function predictImage(args: PredictImageArgs): Promise<PredictImageResult> {
+  const m = args.model.startsWith("models/") ? args.model : `models/${args.model}`;
+  const url = `${BASE}/${m}:predict`;
+  const parameters: Record<string, unknown> = { sampleCount: args.sampleCount ?? 1 };
+  if (args.aspectRatio) parameters.aspectRatio = args.aspectRatio;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: headers(args.apiKey),
+    cache: "no-store",
+    body: JSON.stringify({ instances: [{ prompt: args.prompt }], parameters }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`predictImage ${res.status}: ${text}`);
+  }
+  const data = (await res.json()) as {
+    predictions?: { bytesBase64Encoded?: string; mimeType?: string }[];
+  };
+  const p = data.predictions?.[0];
+  if (!p?.bytesBase64Encoded) throw new Error("predictImage: empty prediction");
+  return {
+    bytesBase64Encoded: p.bytesBase64Encoded,
+    mimeType: p.mimeType ?? "image/png",
+  };
 }
