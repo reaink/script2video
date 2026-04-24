@@ -1,7 +1,8 @@
 "use client";
 
 import { create } from "zustand";
-import type { Shot, ShotJob, ShotJobStatus } from "@/lib/types";
+import { extractLastFrame } from "@/lib/client/media";
+import type { ReferenceImage, Shot, ShotJob, ShotJobStatus } from "@/lib/types";
 
 export interface JobConfig {
   videoModel: string;
@@ -10,8 +11,12 @@ export interface JobConfig {
   durationSec: 4 | 5 | 6 | 8;
   resolution?: "720p" | "1080p" | "4k";
   withReferenceFrames: boolean;
+  /** chainFrames=true forces sequential execution and feeds previous shot's last frame as next shot's first frame. */
+  chainFrames: boolean;
   concurrency: number;
   detectedStyle: string;
+  /** User-uploaded reference images (1-based indexed in shot.referenceImageIndex). */
+  referenceImages: ReferenceImage[];
 }
 
 interface RunState {
@@ -29,44 +34,82 @@ interface RunState {
 const POLL_INTERVAL = 6000;
 const MAX_POLL_MS = 10 * 60 * 1000;
 
+interface ImagePart {
+  bytesBase64Encoded: string;
+  mimeType: string;
+}
+
 export const useJobsStore = create<RunState>((set, get) => {
   let cancelled = false;
+  /** Cache of generated frame to feed as the next shot's first frame in chain mode. */
+  const lastFrameByIndex: Record<number, ImagePart> = {};
 
   const setJob = (shotIndex: number, patch: Partial<ShotJob>) =>
     set((s) => ({ jobs: { ...s.jobs, [shotIndex]: { ...s.jobs[shotIndex], ...patch } } }));
 
-  const runShot = async (shot: Shot): Promise<void> => {
+  const generateNanoBananaFrame = async (
+    cfg: JobConfig,
+    shot: Shot,
+    extraRefs: ImagePart[] = []
+  ): Promise<ImagePart | undefined> => {
+    if (!cfg.imageModel) return undefined;
+    const imgPrompt =
+      `Cinematic still frame matching style "${cfg.detectedStyle}". ` +
+      `Aspect ratio ${cfg.aspectRatio}. Scene: ${shot.summary}. ` +
+      `Composition: ${shot.composition}. Camera: ${shot.camera}. ` +
+      `Ambiance: ${shot.ambiance}. Photorealistic, no text, no watermark.`;
+    const res = await fetch("/api/image/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: cfg.imageModel,
+        prompt: imgPrompt,
+        aspectRatio: cfg.aspectRatio,
+        referenceImages: extraRefs,
+      }),
+    });
+    if (!res.ok) return undefined;
+    return (await res.json()) as ImagePart;
+  };
+
+  const pickFirstFrame = async (
+    cfg: JobConfig,
+    shot: Shot,
+    prevIndex: number | null
+  ): Promise<ImagePart | undefined> => {
+    // 1) Explicit user-attached reference image (1-based) — highest priority.
+    if (
+      shot.referenceImageIndex &&
+      shot.referenceImageIndex > 0 &&
+      cfg.referenceImages[shot.referenceImageIndex - 1]
+    ) {
+      const r = cfg.referenceImages[shot.referenceImageIndex - 1];
+      return { bytesBase64Encoded: r.bytesBase64Encoded, mimeType: r.mimeType };
+    }
+    // 2) Chain frame: extracted tail of previous shot.
+    if (cfg.chainFrames && prevIndex != null && lastFrameByIndex[prevIndex]) {
+      return lastFrameByIndex[prevIndex];
+    }
+    // 3) Synthesized frame via Nano Banana, optionally seeded with all user refs.
+    if (cfg.withReferenceFrames && cfg.imageModel) {
+      const refs = cfg.referenceImages.map((r) => ({
+        bytesBase64Encoded: r.bytesBase64Encoded,
+        mimeType: r.mimeType,
+      }));
+      return generateNanoBananaFrame(cfg, shot, refs);
+    }
+    return undefined;
+  };
+
+  const runShot = async (shot: Shot, prevIndex: number | null): Promise<void> => {
     const cfg = get().config;
     if (!cfg) return;
     setJob(shot.index, { status: "running", startedAt: Date.now() });
 
     try {
-      // 1) Optional first-frame via Nano Banana
-      let imagePart: { bytesBase64Encoded: string; mimeType: string } | undefined;
-      if (cfg.withReferenceFrames && cfg.imageModel) {
-        const imgPrompt =
-          `Cinematic still frame matching style "${cfg.detectedStyle}". ` +
-          `Aspect ratio ${cfg.aspectRatio}. Scene: ${shot.summary}. ` +
-          `Composition: ${shot.composition}. Camera: ${shot.camera}. ` +
-          `Ambiance: ${shot.ambiance}. Photorealistic, no text, no watermark.`;
-        const imgRes = await fetch("/api/image/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: cfg.imageModel,
-            prompt: imgPrompt,
-            aspectRatio: cfg.aspectRatio,
-          }),
-        });
-        if (imgRes.ok) {
-          imagePart = await imgRes.json();
-        }
-        // image failure is non-fatal — fall back to prompt-only
-      }
-
+      const imagePart = await pickFirstFrame(cfg, shot, prevIndex);
       if (cancelled) return;
 
-      // 2) Start Veo
       const startRes = await fetch("/api/video/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -84,7 +127,6 @@ export const useJobsStore = create<RunState>((set, get) => {
       const op = startData.name as string;
       setJob(shot.index, { operationName: op });
 
-      // 3) Poll
       const begin = Date.now();
       while (!cancelled) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL));
@@ -103,6 +145,17 @@ export const useJobsStore = create<RunState>((set, get) => {
             videoUri: uri,
             finishedAt: Date.now(),
           });
+
+          // Extract tail frame for the next shot in chain mode.
+          if (cfg.chainFrames) {
+            try {
+              const proxied = `/api/video/proxy?uri=${encodeURIComponent(uri)}`;
+              const tail = await extractLastFrame(proxied, { maxEdge: 1280 });
+              lastFrameByIndex[shot.index] = tail;
+            } catch {
+              // tail extraction is best-effort
+            }
+          }
           return;
         }
         if (Date.now() - begin > MAX_POLL_MS) throw new Error("poll timeout");
@@ -116,13 +169,23 @@ export const useJobsStore = create<RunState>((set, get) => {
     }
   };
 
-  const drain = async (queue: Shot[], concurrency: number) => {
+  const drainSequential = async (shots: Shot[]) => {
+    let prev: number | null = null;
+    for (const s of shots) {
+      if (cancelled) return;
+      await runShot(s, prev);
+      prev = s.index;
+    }
+  };
+
+  const drainParallel = async (shots: Shot[], concurrency: number) => {
+    const queue = [...shots];
     const next = () => queue.shift();
     const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
       while (!cancelled) {
         const s = next();
         if (!s) return;
-        await runShot(s);
+        await runShot(s, null);
       }
     });
     await Promise.all(workers);
@@ -136,6 +199,7 @@ export const useJobsStore = create<RunState>((set, get) => {
     startedAt: null,
     start: async (shots, config) => {
       cancelled = false;
+      for (const k of Object.keys(lastFrameByIndex)) delete lastFrameByIndex[Number(k)];
       const initialJobs: Record<number, ShotJob> = {};
       shots.forEach((s) => {
         initialJobs[s.index] = { shotIndex: s.index, status: "queued" };
@@ -147,7 +211,11 @@ export const useJobsStore = create<RunState>((set, get) => {
         running: true,
         startedAt: Date.now(),
       });
-      await drain([...shots], config.concurrency);
+      if (config.chainFrames) {
+        await drainSequential([...shots]);
+      } else {
+        await drainParallel([...shots], config.concurrency);
+      }
       set({ running: false });
     },
     cancel: () => {
@@ -162,7 +230,7 @@ export const useJobsStore = create<RunState>((set, get) => {
       const shot = get().shots.find((s) => s.index === shotIndex);
       if (!shot) return;
       setJob(shotIndex, { status: "queued", error: undefined, videoUri: undefined });
-      void runShot(shot);
+      void runShot(shot, null);
     },
   };
 });
