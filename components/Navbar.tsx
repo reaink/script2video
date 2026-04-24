@@ -8,7 +8,10 @@ import { useEffect, useState } from "react";
 export function Navbar() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   const next = () => {
     const order = ["system", "light", "dark"] as const;

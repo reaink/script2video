@@ -20,11 +20,11 @@ export async function GET(req: Request) {
     const text = await upstream.text().catch(() => "");
     return new Response(text || "upstream error", { status: upstream.status });
   }
-  return new Response(upstream.body, {
-    status: 200,
-    headers: {
-      "Content-Type": upstream.headers.get("Content-Type") ?? "video/mp4",
-      "Content-Disposition": `attachment; filename="clip.mp4"`,
-    },
-  });
+  const isDownload = url.searchParams.get("download") === "1";
+  const headers: Record<string, string> = {
+    "Content-Type": upstream.headers.get("Content-Type") ?? "video/mp4",
+    "Cache-Control": "private, max-age=3600",
+  };
+  if (isDownload) headers["Content-Disposition"] = `attachment; filename="clip.mp4"`;
+  return new Response(upstream.body, { status: 200, headers });
 }
