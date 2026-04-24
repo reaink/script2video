@@ -17,6 +17,8 @@ export interface JobConfig {
   chainFrames: boolean;
   concurrency: number;
   detectedStyle: string;
+  /** Session that owns these jobs — used to filter display per chat session. */
+  sessionId: string;
   /** User-uploaded reference images (1-based indexed in shot.referenceImageIndex). */
   referenceImages: ReferenceImage[];
 }
@@ -35,6 +37,8 @@ interface RunState {
   regenerate: (shotIndex: number, newPrompt: string) => void;
   /** Resume in-flight jobs after page refresh — picks up Veo polling for jobs that already have operationName. */
   resume: () => void;
+  /** The sessionId whose jobs are currently loaded. */
+  sessionId: string | null;
 }
 
 const POLL_INTERVAL = 6000;
@@ -243,6 +247,7 @@ export const useJobsStore = create<RunState>()(
         jobs: {},
         shots: [],
         config: null,
+        sessionId: null,
         running: false,
         startedAt: null,
         start: async (shots, config) => {
@@ -256,6 +261,7 @@ export const useJobsStore = create<RunState>()(
             jobs: initialJobs,
             shots,
             config,
+            sessionId: config.sessionId,
             running: true,
             startedAt: Date.now(),
           });
@@ -272,7 +278,7 @@ export const useJobsStore = create<RunState>()(
         },
         reset: () => {
           cancelled = true;
-          set({ jobs: {}, shots: [], config: null, running: false, startedAt: null });
+          set({ jobs: {}, shots: [], config: null, sessionId: null, running: false, startedAt: null });
         },
         retry: (shotIndex) => {
           const shot = get().shots.find((s) => s.index === shotIndex);
@@ -329,6 +335,7 @@ export const useJobsStore = create<RunState>()(
         ),
         shots: s.shots,
         config: s.config,
+        sessionId: s.sessionId,
         startedAt: s.startedAt,
       }),
       onRehydrateStorage: () => (state) => {

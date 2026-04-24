@@ -103,8 +103,6 @@ export function ChatWorkspace() {
   const saveActive = useSessionsStore((s) => s.saveActive);
   /** Tracks the id we last hydrated from to avoid clobbering pending edits. */
   const hydratedIdRef = useRef<string | null>(null);
-  /** Pending resubmit stored when models aren't loaded yet at hydration time. */
-  const pendingResubmitRef = useRef<{ script: string; history: UiMessage[] } | null>(null);
 
   // Boot sessions: load IDB, ensure there is at least one active session.
   useEffect(() => {
@@ -188,27 +186,8 @@ export function ChatWorkspace() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages(hydratedMessages);
     setRefImages(rec.refImages);
-    // Auto-resume: if the last message is an unanswered user message, the fetch
-    // was interrupted (e.g. page refresh mid-generation). Re-submit it.
-    const lastMsg = hydratedMessages[hydratedMessages.length - 1];
-    if (lastMsg?.role === "user") {
-      const pending = { script: lastMsg.content, history: hydratedMessages.slice(0, -1) };
-      if (settings.chatModel) {
-        void doFetchStoryboard(pending.script, pending.history);
-      } else {
-        pendingResubmitRef.current = pending;
-      }
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, sessionsList]);
-
-  // Fire pending resubmit once models are available (race: models load after hydration).
-  useEffect(() => {
-    if (!settings.chatModel || !pendingResubmitRef.current) return;
-    const { script, history } = pendingResubmitRef.current;
-    pendingResubmitRef.current = null;
-    void doFetchStoryboard(script, history);
-  }, [settings.chatModel, doFetchStoryboard]);
 
   // Persist edits back to IDB. Debounced via a microtask-batched effect.
   useEffect(() => {
@@ -344,6 +323,7 @@ export function ChatWorkspace() {
       chainFrames: settings.chainFrames,
       concurrency: settings.chainFrames ? 1 : settings.concurrency,
       detectedStyle: sb.detectedStyle,
+      sessionId: activeId ?? "",
       referenceImages: refImages,
     });
   };
@@ -358,7 +338,7 @@ export function ChatWorkspace() {
     <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-[320px_1fr]">
       {/* 左：参数面板 */}
       <Card className="h-fit lg:sticky lg:top-20">
-        <Card.Content className="flex flex-col gap-4 p-5">
+        <Card.Content className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">参数</h2>
             <Button size="sm" variant="ghost" onPress={refreshModels} isDisabled={loadingModels}>
@@ -567,28 +547,52 @@ export function ChatWorkspace() {
       {/* 右：聊天区 */}
       <div className="flex h-[calc(100vh-7rem)] flex-col gap-3">
         <div className="flex items-center justify-between">
-          <SessionsPanel />
-          <JobsPanel />
+          <div className="flex items-center gap-3">
+            <SessionsPanel />
+            {(() => {
+              const rec = sessionsList.find((s) => s.id === activeId);
+              if (!rec) return null;
+              return (
+                <span className="hidden text-xs text-default-400 sm:block">
+                  {rec.title}
+                  <span className="ml-2 opacity-60">
+                    {new Date(rec.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </span>
+              );
+            })()}
+          </div>
+          <JobsPanel activeSessionId={activeId} />
         </div>
         <Card className="flex-1 overflow-hidden">
-          <Card.Content className="flex h-full flex-col gap-3 overflow-y-auto p-4">
+          <Card.Content className="flex h-full flex-col gap-3 overflow-y-auto">
             {messages.length === 0 && (
               <div className="m-auto max-w-md text-center text-default-500">
                 输入你的脚本，AI 会按所选视频模型时长拆分分镜，并生成可直接喂给 Veo 的英文 prompt。
               </div>
             )}
-            {messages.map((m) => (
-              <MessageBubble
-                key={m.id}
-                msg={m}
-                refCount={refImages.length}
-                onStart={startGeneration}
-              />
-            ))}
+            {messages.map((m, i) => {
+              const isLastUnanswered =
+                i === messages.length - 1 &&
+                m.role === "user" &&
+                !submitting;
+              return (
+                <MessageBubble
+                  key={m.id}
+                  msg={m}
+                  refCount={refImages.length}
+                  onStart={startGeneration}
+                  isLastUnanswered={isLastUnanswered}
+                  onRetry={() => {
+                    void doFetchStoryboard(m.content, messages.slice(0, i));
+                  }}
+                />
+              );
+            })}
             {submitting && (
-              <div className="flex items-center gap-2 text-sm text-default-500">
+              <Card className="flex flex-row gap-2 text-sm text-default-500" variant="secondary">
                 <Spinner size="sm" /> 模型正在拆分镜...
-              </div>
+              </Card>
             )}
           </Card.Content>
         </Card>
@@ -609,7 +613,7 @@ export function ChatWorkspace() {
                 <button
                   type="button"
                   onClick={() => removeRefImage(r.id)}
-                  className="absolute -right-1 -top-1 rounded-full bg-default-900/80 px-1.5 text-[10px] text-white"
+                  className="absolute -right-1 -top-1 rounded-full bg-default-900/80 px-1.5 text-[10px] text-white bg-danger/50 hover:bg-danger/80"
                   aria-label="移除"
                 >
                   ×
@@ -664,21 +668,53 @@ function MessageBubble({
   msg,
   refCount,
   onStart,
+  isLastUnanswered,
+  onRetry,
 }: {
   msg: UiMessage;
   refCount: number;
   onStart: (sb: Storyboard) => void;
+  isLastUnanswered?: boolean;
+  onRetry?: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    void navigator.clipboard.writeText(msg.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
   if (msg.role === "user") {
     return (
-      <div className="ml-auto max-w-[80%] rounded-2xl bg-primary px-4 py-2 text-primary-foreground">
-        <pre className="whitespace-pre-wrap font-sans text-sm">{msg.content}</pre>
+      <div className="ml-auto max-w-[80%]">
+        <button type="button" onClick={copy} className="group w-full text-left">
+          <Card variant="secondary">
+            <Card.Content className="relative">
+              <pre className="whitespace-pre-wrap font-sans text-sm">{msg.content}</pre>
+              <Chip className="absolute right-3 top-2 bg-accent opacity-0 transition-opacity group-hover:opacity-100">
+                {copied ? "已复制" : "点击复制"}
+              </Chip>
+            </Card.Content>
+          </Card>
+        </button>
+        {isLastUnanswered && (
+          <div className="mt-1 flex items-center justify-end gap-2">
+            <span className="text-xs text-warning">生成被中断</span>
+            <Button size="sm" variant="outline" onPress={onRetry}>
+              重新生成分镜
+            </Button>
+          </div>
+        )}
       </div>
     );
   }
   return (
-    <div className="mr-auto w-full max-w-full">
-      <div className="mb-2 rounded-2xl bg-default-100 px-4 py-2 text-sm">{msg.content}</div>
+    <div className="mr-auto w-full max-w-full space-y-2">
+      <Card variant="secondary">
+        <Card.Content className="text-sm">{msg.content}</Card.Content>
+      </Card>
       {msg.storyboard && (
         <StoryboardView sb={msg.storyboard} refCount={refCount} onStart={onStart} />
       )}
@@ -696,7 +732,7 @@ function StoryboardView({
   onStart: (sb: Storyboard) => void;
 }) {
   return (
-    <div className="space-y-3">
+    <Card variant="secondary" className="space-y-3">
       <div className="flex flex-wrap gap-2 text-xs">
         <Chip variant="soft" color="accent">
           风格：{sb.detectedStyle}
@@ -761,7 +797,7 @@ function StoryboardView({
           确认并生成视频
         </Button>
       </div>
-    </div>
+    </Card>
   );
 }
 

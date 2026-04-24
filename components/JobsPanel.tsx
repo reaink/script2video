@@ -6,11 +6,12 @@ import { useJobsStore } from "@/lib/stores/jobs";
 import { getCachedVideoUrl, getCacheStats } from "@/lib/db/videoCache";
 import { buildShotVtt, buildFullSrt, buildFullVtt, vttToDataUrl } from "@/lib/utils/vtt";
 import { downloadBlob, exportConcatenated } from "@/lib/client/exportVideo";
-import type { ExportProgress } from "@/lib/client/exportVideo";
+import type { ExportProgress, ExportShot } from "@/lib/client/exportVideo";
 import type { Shot } from "@/lib/types";
 
 interface Props {
   triggerLabel?: string;
+  activeSessionId?: string | null;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -27,15 +28,19 @@ const STATUS_COLOR: Record<string, "default" | "accent" | "success" | "warning" 
   failed: "danger",
 };
 
-export function JobsPanel({ triggerLabel = "查看生成进度" }: Props) {
+export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId }: Props) {
   const overlay = useOverlayState();
   const jobs = useJobsStore((s) => s.jobs);
-  const shots = useJobsStore((s) => s.shots);
+  const allShots = useJobsStore((s) => s.shots);
+  const storeSessionId = useJobsStore((s) => s.sessionId);
   const running = useJobsStore((s) => s.running);
   const cancel = useJobsStore((s) => s.cancel);
   const retry = useJobsStore((s) => s.retry);
   const reset = useJobsStore((s) => s.reset);
   const regenerate = useJobsStore((s) => s.regenerate);
+
+  // Only show jobs that belong to the currently active chat session.
+  const shots = activeSessionId && activeSessionId !== storeSessionId ? [] : allShots;
 
   const total = shots.length;
   const done = shots.filter((s) => jobs[s.index]?.status === "done").length;
@@ -54,18 +59,31 @@ export function JobsPanel({ triggerLabel = "查看生成进度" }: Props) {
   const allDone = total > 0 && done === total;
 
   const exportVideo = async () => {
-    const readyShots = shots
+    const readyShots: ExportShot[] = shots
       .filter((s) => jobs[s.index]?.status === "done")
       .map((s) => ({
         index: s.index,
         blobUrl: jobs[s.index]?.videoBlobUrl,
         videoUri: jobs[s.index]?.videoUri,
+        subtitle: s.subtitle,
+        durationSec: s.durationSec,
       }));
     if (readyShots.length === 0) return;
     try {
       setExportProgress({ shot: 0, total: readyShots.length, phase: "preparing" });
       const blob = await exportConcatenated(readyShots, setExportProgress);
-      downloadBlob(blob, "film.webm");
+      const ext = blob.type.startsWith("video/mp4") ? "mp4" : "webm";
+      downloadBlob(blob, `film.${ext}`);
+      // Also export merged SRT if any shot has subtitles
+      if (readyShots.some((s) => s.subtitle?.trim())) {
+        const srtShots = readyShots.map((s) => ({
+          index: s.index,
+          subtitle: s.subtitle,
+          durationSec: s.durationSec ?? 0,
+        }));
+        const srt = buildFullSrt(srtShots);
+        downloadBlob(new Blob([srt], { type: "text/srt" }), "film.srt");
+      }
     } finally {
       setExportProgress(null);
     }

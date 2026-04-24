@@ -44,8 +44,89 @@ function loadVideo(blob: Blob): Promise<HTMLVideoElement> {
   });
 }
 
+export interface ExportShot {
+  index: number;
+  blobUrl?: string;
+  videoUri?: string;
+  subtitle?: string;
+  durationSec?: number;
+}
+
+function splitSentences(text: string): string[] {
+  const parts = text
+    .split(/(?<=[。！？!?.…]+)\s*/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [text];
+}
+
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+): string[] {
+  if (ctx.measureText(text).width <= maxWidth) return [text];
+  const lines: string[] = [];
+  // Prefer word boundaries for Latin; fall back to char wrap for CJK
+  const words = text.split(" ");
+  if (words.length > 1) {
+    let line = "";
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
+    }
+    if (line) lines.push(line);
+  } else {
+    let line = "";
+    for (const char of text) {
+      const test = line + char;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        lines.push(line);
+        line = char;
+      } else {
+        line = test;
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
+}
+
+function drawSubtitle(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  text: string
+) {
+  const fontSize = Math.max(24, Math.round(H * 0.048));
+  ctx.save();
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  ctx.lineWidth = Math.max(3, fontSize * 0.12);
+  ctx.strokeStyle = "rgba(0,0,0,0.85)";
+  ctx.fillStyle = "#ffffff";
+
+  const maxWidth = W * 0.9;
+  const lines = wrapText(ctx, text, maxWidth);
+  const lineHeight = fontSize * 1.25;
+  const baseY = H - Math.round(H * 0.04);
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const y = baseY - (lines.length - 1 - i) * lineHeight;
+    ctx.strokeText(lines[i], W / 2, y);
+    ctx.fillText(lines[i], W / 2, y);
+  }
+  ctx.restore();
+}
+
 export async function exportConcatenated(
-  shots: { index: number; blobUrl?: string; videoUri?: string }[],
+  shots: ExportShot[],
   onProgress?: ProgressCb
 ): Promise<Blob> {
   const total = shots.length;
@@ -78,13 +159,29 @@ export async function exportConcatenated(
   canvas.height = H;
   const ctx = canvas.getContext("2d")!;
 
-  const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-    ? "video/webm;codecs=vp9"
-    : MediaRecorder.isTypeSupported("video/webm")
-      ? "video/webm"
-      : "video/mp4";
+  const mimeType =
+    MediaRecorder.isTypeSupported("video/mp4;codecs=avc1") ? "video/mp4;codecs=avc1" :
+      MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" :
+        MediaRecorder.isTypeSupported("video/webm;codecs=vp9") ? "video/webm;codecs=vp9" :
+          "video/webm";
 
+  // Audio pipeline: decode audio directly from blob (bypasses muted attribute issues)
+  let audioCtx: AudioContext | null = null;
+  let gainNode: GainNode | null = null;
   const stream = canvas.captureStream(30);
+  try {
+    audioCtx = new AudioContext();
+    await audioCtx.resume();
+    const audioDest = audioCtx.createMediaStreamDestination();
+    gainNode = audioCtx.createGain();
+    gainNode.connect(audioDest);
+    for (const track of audioDest.stream.getAudioTracks()) {
+      stream.addTrack(track);
+    }
+  } catch {
+    audioCtx = null;
+  }
+
   const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
   const chunks: BlobPart[] = [];
   recorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
@@ -101,30 +198,67 @@ export async function exportConcatenated(
     const vid = i === 0 ? firstVid : await loadVideo(blobs[i]);
     const objUrl = vid.src;
 
+    // Decode audio directly from blob — independent of video element's muted state
+    let audioSrc: AudioBufferSourceNode | null = null;
+    if (audioCtx && gainNode) {
+      try {
+        const ab = await blobs[i].arrayBuffer();
+        const audioBuf = await audioCtx.decodeAudioData(ab);
+        audioSrc = audioCtx.createBufferSource();
+        audioSrc.buffer = audioBuf;
+        audioSrc.connect(gainNode);
+        audioSrc.start();
+      } catch {
+        // clip has no audio track or codec unsupported
+      }
+    }
+
+    const shot = shots[i];
+    const subtitleCues = shot.subtitle?.trim()
+      ? splitSentences(shot.subtitle.trim())
+      : null;
+    const cueInterval = subtitleCues && shot.durationSec
+      ? shot.durationSec / subtitleCues.length
+      : 0;
+
+    const paintSubtitle = () => {
+      if (!subtitleCues) return;
+      const cueIdx = cueInterval > 0
+        ? Math.min(Math.floor(vid.currentTime / cueInterval), subtitleCues.length - 1)
+        : 0;
+      drawSubtitle(ctx, W, H, subtitleCues[cueIdx]);
+    };
+
     await new Promise<void>((resolve, reject) => {
       vid.currentTime = 0;
       const paint = () => {
         if (vid.ended || vid.paused) {
           ctx.drawImage(vid, 0, 0, W, H);
+          paintSubtitle();
           URL.revokeObjectURL(objUrl);
           resolve();
           return;
         }
         ctx.drawImage(vid, 0, 0, W, H);
+        paintSubtitle();
         requestAnimationFrame(paint);
       };
       vid.onended = () => {
         ctx.drawImage(vid, 0, 0, W, H);
+        paintSubtitle();
         URL.revokeObjectURL(objUrl);
         resolve();
       };
       vid.onerror = () => reject(new Error(`playback error shot #${i + 1}`));
       void vid.play().then(() => requestAnimationFrame(paint));
     });
+
+    audioSrc?.disconnect();
   }
 
   recorder.stop();
   await recordingDone;
+  await audioCtx?.close();
 
   onProgress?.({ shot: total, total, phase: "done" });
   return new Blob(chunks, { type: mimeType });

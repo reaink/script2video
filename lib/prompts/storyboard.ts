@@ -1,5 +1,24 @@
 import type { Storyboard } from "@/lib/types";
 
+const LANGUAGE_NAMES: Record<string, string> = {
+  "en": "English",
+  "en-US": "English",
+  "en-GB": "English",
+  "zh": "Mandarin Chinese",
+  "zh-CN": "Mandarin Chinese (Simplified)",
+  "zh-TW": "Mandarin Chinese (Traditional)",
+  "ja": "Japanese",
+  "ko": "Korean",
+  "fr": "French",
+  "de": "German",
+  "es": "Spanish",
+};
+
+export function languageName(tag?: string): string {
+  if (!tag) return "the script's source language";
+  return LANGUAGE_NAMES[tag] ?? tag;
+}
+
 export const STORYBOARD_SYSTEM_PROMPT = `You are a senior film director and storyboard planner.
 Given a script from the user, you must:
 1. Detect or infer a coherent visual style. If the user specified one, use it; otherwise propose one that fits the tone.
@@ -14,6 +33,8 @@ Given a script from the user, you must:
    - These in-scene visuals should feel organic (shown on a screen, holographic display, whiteboard, printed material, etc.), not superimposed text.
    - Generic or empty shots are not acceptable; every shot must feel like a distinct, memorable moment.
    - If hands or fingers appear, explicitly forbid obscene gestures: append "no middle finger, no offensive hand gestures" to the veoPrompt.
+   - DIALOGUE CONTRACT (critical): if the shot has spoken lines, you MUST (a) populate the "dialogue" array with EXACT verbatim lines in the user-requested language (no translation, no paraphrase, no summarization), AND (b) end the veoPrompt with a sentence of the form: 'The {speaker} says in {LanguageName}: "<verbatim line>"' for EACH line, joined by ' Then '. Do NOT translate the quoted line into English. The quoted text inside veoPrompt must be byte-identical to the corresponding dialogue[i].line.
+   - SUBTITLE CONTRACT: when subtitles are enabled, the 'subtitle' field MUST equal the dialogue lines joined by a single space, in the same language and verbatim. If there is no dialogue, leave subtitle empty.
 4. Honor the subtitle setting from the user. If subtitles are enabled, fill the "subtitle" field per shot in the script's original language; otherwise leave it empty.
 5. If the user attached reference images (1-based, in order), set "referenceImageIndex" on the shots that should visually anchor on a specific image. Use 0 (or omit) when none applies. Each image may be referenced by multiple shots.
 6. Output STRICT JSON matching the provided schema. No markdown, no commentary.`;
@@ -23,9 +44,10 @@ Critically audit the entire storyboard as a whole. Check and FIX:
 1. Duration accuracy: each shot's durationSec MUST match the actual speaking time of its subtitle/dialogue (~4 Chinese chars/sec, ~2.5 English words/sec, ~5 JP/KR chars/sec) plus 0.5–1.5s breathing room. Snap to the allowed durations list. Reject uniform durations across all shots when content varies.
 2. Coherence: adjacent shots should transition naturally; continuityHint should match.
 3. Visual richness: every veoPrompt must be specific, sensory, and free of generic filler. Add contextual in-scene props (charts, diagrams, UI, signage) when the script's topic supports it.
-4. Subtitle/language consistency: subtitle text must be in the requested language and reasonable for the duration.
-5. Pacing balance: redistribute shots if the total duration feels off, or if any shot is too dense / too sparse.
-6. Forbidden content: ensure no shot describes obscene hand gestures.
+4. Subtitle/language consistency: subtitle text must be in the requested language and reasonable for the duration. The 'subtitle' MUST be the verbatim concatenation of dialogue[*].line (single space separator) in the requested language; do NOT translate or paraphrase.
+5. Dialogue↔Veo consistency: every dialogue[i].line must appear VERBATIM (byte-identical, including punctuation) inside the corresponding shot's veoPrompt, wrapped as 'The {speaker} says in {LanguageName}: "<line>"'. Reject any veoPrompt where the quoted speech is paraphrased or translated to English.
+6. Pacing balance: redistribute shots if the total duration feels off, or if any shot is too dense / too sparse.
+7. Forbidden content: ensure no shot describes obscene hand gestures.
 Output the COMPLETE revised storyboard in STRICT JSON matching the same schema. No markdown, no commentary. Preserve detectedStyle and language unless they are clearly wrong.`;
 
 export interface BuildPromptArgs {
@@ -51,7 +73,9 @@ export function buildStoryboardUserPrompt(args: BuildPromptArgs): string {
     `IMPORTANT: do NOT make every shot the same duration — vary them to fit the scene length.`,
     `Aspect ratio: ${args.aspectRatio}.`,
     `Subtitles: ${args.withSubtitle ? "ENABLED — fill 'subtitle' per shot." : "DISABLED — leave 'subtitle' empty."}`,
-    args.language ? `IMPORTANT: ALL subtitle and dialogue text MUST be written in language "${args.language}". This overrides the script's source language.` : ``,
+    args.language
+      ? `IMPORTANT: ALL subtitle and dialogue text MUST be written in language "${args.language}" (${languageName(args.language)}) — verbatim, no translation. The veoPrompt prose itself stays English, but every quoted spoken line inside it must remain in ${languageName(args.language)}.`
+      : ``,
     refLine,
     ``,
     `=== SCRIPT ===`,

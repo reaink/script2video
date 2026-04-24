@@ -34,6 +34,7 @@ export interface GenerateContentArgs {
   contents: unknown[];
   systemInstruction?: { parts: { text: string }[] };
   generationConfig?: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export async function generateContent(args: GenerateContentArgs): Promise<unknown> {
@@ -43,6 +44,7 @@ export async function generateContent(args: GenerateContentArgs): Promise<unknow
     method: "POST",
     headers: headers(args.apiKey),
     cache: "no-store",
+    signal: args.signal,
     body: JSON.stringify({
       contents: args.contents,
       systemInstruction: args.systemInstruction,
