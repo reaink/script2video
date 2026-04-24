@@ -107,6 +107,17 @@ export const useJobsStore = create<RunState>((set, get) => {
     if (!cfg) return;
     setJob(shot.index, { status: "running", startedAt: Date.now() });
 
+    // Snap shot duration to the nearest allowed value based on model capabilities.
+    const snapDuration = (d: number): number => {
+      const allowed = cfg.videoModel.includes("lite")
+        ? [5, 6, 8]
+        : cfg.videoModel.includes("veo-3.0")
+          ? [8]
+          : [4, 6, 8];
+      return allowed.reduce((best, v) => (Math.abs(v - d) < Math.abs(best - d) ? v : best));
+    };
+    const durationSeconds = snapDuration(shot.durationSec);
+
     try {
       const imagePart = await pickFirstFrame(cfg, shot, prevIndex);
       if (cancelled) return;
@@ -118,7 +129,7 @@ export const useJobsStore = create<RunState>((set, get) => {
           model: cfg.videoModel,
           prompt: shot.veoPrompt,
           aspectRatio: cfg.aspectRatio,
-          durationSeconds: cfg.durationSec,
+          durationSeconds,
           resolution: cfg.resolution,
           image: imagePart,
         }),

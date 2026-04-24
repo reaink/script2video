@@ -56,7 +56,7 @@ export function JobsPanel({ triggerLabel = "查看生成进度" }: Props) {
       </Button>
       <Drawer state={overlay}>
         <Drawer.Backdrop>
-          <Drawer.Content placement="right" className="w-full max-w-xl">
+          <Drawer.Content placement="right" className="w-6xl">
             <Drawer.Dialog>
               <Drawer.Header>
                 <div className="flex w-full items-center justify-between">

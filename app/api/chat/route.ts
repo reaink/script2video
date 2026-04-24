@@ -18,6 +18,7 @@ interface ChatBody {
   model: string;
   script: string;
   durationSec: 4 | 5 | 6 | 8;
+  allowedDurations: number[];
   aspectRatio: "16:9" | "9:16";
   withSubtitle: boolean;
   language?: string;
@@ -44,6 +45,7 @@ export async function POST(req: Request) {
   const userText = buildStoryboardUserPrompt({
     script: body.script,
     durationSec: body.durationSec,
+    allowedDurations: body.allowedDurations?.length ? body.allowedDurations : [4, 6, 8],
     aspectRatio: body.aspectRatio,
     withSubtitle: body.withSubtitle,
     language: body.language,

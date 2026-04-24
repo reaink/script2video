@@ -36,6 +36,7 @@ const SETTINGS_KEY = "s2v_ui_settings_v1";
 interface UiSettings {
   chatModel?: string;
   videoModel?: string;
+  imageModel?: string;
   aspectRatio: "16:9" | "9:16";
   durationSec: 4 | 5 | 6 | 8;
   withSubtitle: boolean;
@@ -72,6 +73,13 @@ function deriveSessionTitle(messages: UiMessage[]): string {
   if (!first) return "新会话";
   const t = first.content.trim().split(/\s+/).slice(0, 6).join(" ");
   return t.length > 40 ? `${t.slice(0, 40)}…` : t || "新会话";
+}
+
+function pickPreferred(list: GeminiModel[], preferred: string[]): string | undefined {
+  for (const p of preferred) {
+    if (list.some((m) => m.name === p)) return p;
+  }
+  return undefined;
 }
 
 export function ChatWorkspace() {
@@ -160,8 +168,20 @@ export function ChatWorkspace() {
       setModels(d);
       setSettings((s) => ({
         ...s,
-        chatModel: s.chatModel ?? d.chat[0]?.name,
-        videoModel: s.videoModel ?? d.video[0]?.name,
+        chatModel: s.chatModel ?? pickPreferred(d.chat, [
+          "models/gemini-3.1-pro-preview",
+          "models/gemini-3-pro-preview",
+          "models/gemini-2.5-pro",
+        ]) ?? d.chat[0]?.name,
+        videoModel: s.videoModel ?? pickPreferred(d.video, [
+          "models/veo-3.1-fast-generate-preview",
+          "models/veo-3.1-generate-preview",
+          "models/veo-3.0-fast-generate-001",
+        ]) ?? d.video[0]?.name,
+        imageModel: s.imageModel ?? pickPreferred(d.image, [
+          "models/nano-banana-pro-preview",
+          "models/gemini-3-pro-image-preview",
+        ]) ?? d.image.find((x) => /(image-preview|nano-banana)/.test(x.name))?.name,
       }));
     } finally {
       setLoadingModels(false);
@@ -179,11 +199,6 @@ export function ChatWorkspace() {
     if (m.includes("veo-3.0")) return [8];
     return [4, 6, 8];
   }, [settings.videoModel]);
-
-  const pickedImageModel = useMemo(
-    () => models?.image.find((x) => /(image-preview|nano-banana)/.test(x.name))?.name,
-    [models]
-  );
 
   const onPickFiles = useCallback(
     async (files: FileList | null) => {
@@ -234,6 +249,7 @@ export function ChatWorkspace() {
           model: settings.chatModel,
           script,
           durationSec: settings.durationSec,
+          allowedDurations,
           aspectRatio: settings.aspectRatio,
           withSubtitle: settings.withSubtitle,
           language: settings.language,
@@ -277,7 +293,7 @@ export function ChatWorkspace() {
     }
     void startJobs(sb.shots, {
       videoModel: settings.videoModel,
-      imageModel: settings.withReferenceFrames ? pickedImageModel : undefined,
+      imageModel: settings.withReferenceFrames ? settings.imageModel : undefined,
       aspectRatio: settings.aspectRatio,
       durationSec: settings.durationSec,
       withReferenceFrames: settings.withReferenceFrames,
@@ -351,6 +367,28 @@ export function ChatWorkspace() {
           </Select>
 
           <Select
+            selectedKey={settings.imageModel ?? null}
+            onSelectionChange={setSelected("imageModel")}
+            placeholder="选择图像模型"
+          >
+            <Label>图像模型 (帧合成)</Label>
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                {(models?.image ?? []).map((m) => (
+                  <ListBox.Item key={m.name} id={m.name} textValue={m.displayName ?? m.name}>
+                    {m.displayName ?? m.name}
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
+
+          <Select
             selectedKey={settings.aspectRatio}
             onSelectionChange={(k) =>
               k && setSettings((s) => ({ ...s, aspectRatio: k as "16:9" | "9:16" }))
@@ -381,7 +419,7 @@ export function ChatWorkspace() {
               k && setSettings((s) => ({ ...s, durationSec: Number(k) as 4 | 5 | 6 | 8 }))
             }
           >
-            <Label>单镜头时长</Label>
+            <Label>最大单镜头时长</Label>
             <Select.Trigger>
               <Select.Value />
               <Select.Indicator />
@@ -391,6 +429,36 @@ export function ChatWorkspace() {
                 {allowedDurations.map((d) => (
                   <ListBox.Item key={d} id={String(d)} textValue={`${d} \u79d2`}>
                     {d} 秒
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
+
+          <Select
+            selectedKey={settings.language}
+            onSelectionChange={(k) => k && setSettings((s) => ({ ...s, language: String(k) }))}
+          >
+            <Label>字幕 / 对话语言</Label>
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                {([
+                  { id: "zh-CN", label: "中文简体" },
+                  { id: "zh-TW", label: "中文繁體" },
+                  { id: "en-US", label: "English" },
+                  { id: "ja", label: "日本語" },
+                  { id: "ko", label: "한국어" },
+                  { id: "fr", label: "Français" },
+                  { id: "de", label: "Deutsch" },
+                  { id: "es", label: "Español" },
+                ] as const).map((l) => (
+                  <ListBox.Item key={l.id} id={l.id} textValue={l.label}>
+                    {l.label}
                     <ListBox.ItemIndicator />
                   </ListBox.Item>
                 ))}

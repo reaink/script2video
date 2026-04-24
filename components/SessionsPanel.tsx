@@ -25,7 +25,7 @@ export function SessionsPanel() {
       </Button>
       <Drawer state={overlay}>
         <Drawer.Backdrop>
-          <Drawer.Content placement="left" className="w-full max-w-sm">
+          <Drawer.Content placement="left">
             <Drawer.Dialog>
               <Drawer.Header>
                 <div className="flex w-full items-center justify-between">
