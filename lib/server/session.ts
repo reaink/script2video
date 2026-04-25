@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import crypto from "node:crypto";
+import type { Provider } from "@/lib/types";
 
 const COOKIE_NAME = "s2v_session";
 
@@ -20,8 +21,8 @@ function getSecret(): Buffer {
 }
 
 export interface SessionData {
-  provider: "gemini";
-  apiKey: string;
+  /** Multi-provider API keys. */
+  apiKeys: Partial<Record<Provider, string>>;
 }
 
 function encrypt(plaintext: string, key: Buffer): string {
@@ -48,7 +49,12 @@ export async function readSession(): Promise<SessionData | null> {
   if (!v) return null;
   try {
     const key = getSecret();
-    return JSON.parse(decrypt(v, key)) as SessionData;
+    const parsed = JSON.parse(decrypt(v, key)) as Record<string, unknown>;
+    // Migrate old single-provider format: { provider: "gemini", apiKey: "..." }
+    if (typeof parsed.apiKey === "string" && typeof parsed.provider === "string" && !parsed.apiKeys) {
+      return { apiKeys: { [parsed.provider as Provider]: parsed.apiKey as string } };
+    }
+    return parsed as unknown as SessionData;
   } catch {
     return null;
   }
@@ -73,6 +79,18 @@ export async function clearSession(): Promise<void> {
 
 export async function requireSession(): Promise<SessionData> {
   const s = await readSession();
-  if (!s) throw new Error("UNAUTHENTICATED");
+  if (!s || Object.keys(s.apiKeys).length === 0) throw new Error("UNAUTHENTICATED");
   return s;
+}
+
+/** Get a specific provider's API key, throwing if not configured. */
+export function requireApiKey(session: SessionData, provider: Provider): string {
+  const k = session.apiKeys[provider];
+  if (!k) throw new Error(`Provider "${provider}" is not configured`);
+  return k;
+}
+
+/** Get a specific provider's API key without throwing. */
+export function getApiKey(session: SessionData, provider: Provider): string | undefined {
+  return session.apiKeys[provider];
 }

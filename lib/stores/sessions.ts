@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { idbDelete, idbGetAll, idbPut, STORE_SESSIONS } from "@/lib/db/idb";
+import { useJobsStore } from "@/lib/stores/jobs";
 import type { ReferenceImage, Storyboard } from "@/lib/types";
 
 export interface SessionMessage {
@@ -49,7 +50,7 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     if (get().loaded) return;
     try {
       const list = await idbGetAll<ChatSessionRecord>(STORE_SESSIONS);
-      list.sort((a, b) => b.updatedAt - a.updatedAt);
+      list.sort((a, b) => b.createdAt - a.createdAt);
       const stored =
         typeof window !== "undefined" ? localStorage.getItem(ACTIVE_KEY) : null;
       const activeId =
@@ -79,7 +80,10 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     if (typeof window !== "undefined") localStorage.setItem(ACTIVE_KEY, id);
   },
   remove: async (id) => {
-    await idbDelete(STORE_SESSIONS, id);
+    await Promise.all([
+      idbDelete(STORE_SESSIONS, id),
+      useJobsStore.getState().clearSessionCache(id),
+    ]);
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id);
       const activeId = s.activeId === id ? sessions[0]?.id ?? null : s.activeId;
@@ -104,7 +108,7 @@ export const useSessionsStore = create<SessionsState>((set, get) => ({
     };
     await idbPut(STORE_SESSIONS, merged);
     set((s) => ({
-      sessions: [merged, ...s.sessions.filter((x) => x.id !== activeId)],
+      sessions: s.sessions.map((x) => (x.id === activeId ? merged : x)),
     }));
   },
 }));

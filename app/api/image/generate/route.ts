@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/server/session";
+import { requireSession, requireApiKey } from "@/lib/server/session";
 import { generateContent, predictImage } from "@/lib/providers/gemini";
 
 interface RefImage {
@@ -45,11 +45,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing fields" }, { status: 400 });
   }
 
+  // Image generation is Gemini-only
+  let apiKey: string;
+  try {
+    apiKey = requireApiKey(session, "gemini");
+  } catch {
+    return NextResponse.json({ error: "Gemini is not configured. Image generation requires a Gemini API key." }, { status: 401 });
+  }
+
   try {
     if (isImagen(body.model)) {
       // Imagen :predict — text-only
       const out = await predictImage({
-        apiKey: session.apiKey,
+        apiKey,
         model: body.model,
         prompt: body.prompt,
         aspectRatio: body.aspectRatio,
@@ -65,7 +73,7 @@ export async function POST(req: Request) {
     }
 
     const data = (await generateContent({
-      apiKey: session.apiKey,
+      apiKey,
       model: body.model,
       contents: [{ role: "user", parts }],
       generationConfig: {

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/server/session";
-import { generateContent } from "@/lib/providers/gemini";
+import { requireSession, requireApiKey } from "@/lib/server/session";
+import { generateContent as geminiGenerateContent } from "@/lib/providers/gemini";
+import { generateContent as openaiGenerateContent } from "@/lib/providers/openai";
+import { generateContent as anthropicGenerateContent } from "@/lib/providers/anthropic";
 import {
   STORYBOARD_SYSTEM_PROMPT,
   STORYBOARD_REVIEW_SYSTEM_PROMPT,
@@ -11,6 +13,7 @@ import {
   languageName,
 } from "@/lib/prompts/storyboard";
 import type { Storyboard } from "@/lib/types";
+import { inferProvider } from "@/lib/types";
 
 interface RefImage {
   name: string;
@@ -21,7 +24,7 @@ interface RefImage {
 interface ChatBody {
   model: string;
   script: string;
-  durationSec: 4 | 5 | 6 | 8;
+  durationSec: number;
   allowedDurations: number[];
   aspectRatio: "16:9" | "9:16";
   withSubtitle: boolean;
@@ -31,6 +34,78 @@ interface ChatBody {
 }
 
 const MAX_REFERENCE_IMAGES = 3;
+
+/** Call the appropriate chat provider and return raw JSON text. */
+async function callChatModel(args: {
+  model: string;
+  apiKey: string;
+  systemPrompt: string;
+  userText: string;
+  history: { role: "user" | "assistant"; content: string }[];
+  refs: RefImage[];
+  signal?: AbortSignal;
+}): Promise<string> {
+  const provider = inferProvider(args.model);
+
+  if (provider === "gemini") {
+    const userParts: Array<
+      { text: string } | { inlineData: { mimeType: string; data: string } }
+    > = [{ text: args.userText }];
+    for (const r of args.refs) {
+      userParts.push({ inlineData: { mimeType: r.mimeType, data: r.bytesBase64Encoded } });
+    }
+    const contents = [
+      ...args.history.map((h) => ({
+        role: h.role === "assistant" ? "model" : "user",
+        parts: [{ text: h.content }],
+      })),
+      { role: "user", parts: userParts },
+    ];
+    const raw = (await geminiGenerateContent({
+      apiKey: args.apiKey,
+      model: args.model,
+      contents,
+      systemInstruction: { parts: [{ text: args.systemPrompt }] },
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: STORYBOARD_RESPONSE_SCHEMA,
+        temperature: 0.7,
+      },
+      signal: args.signal,
+    })) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    return raw.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
+  }
+
+  // For OpenAI and Anthropic, build a plain text conversation (no multimodal refs)
+  const historyMsgs = args.history.map((h) => ({
+    role: h.role as "user" | "assistant",
+    content: h.content,
+  }));
+  const userMsg = { role: "user" as const, content: args.userText };
+
+  if (provider === "openai") {
+    return openaiGenerateContent({
+      apiKey: args.apiKey,
+      model: args.model,
+      system: args.systemPrompt,
+      messages: [...historyMsgs, userMsg],
+      jsonMode: true,
+      signal: args.signal,
+    });
+  }
+
+  if (provider === "anthropic") {
+    return anthropicGenerateContent({
+      apiKey: args.apiKey,
+      model: args.model,
+      system: args.systemPrompt,
+      messages: [...historyMsgs, userMsg],
+      signal: args.signal,
+    });
+  }
+
+  throw new Error(`Provider "${provider}" does not support chat`);
+}
 
 export async function POST(req: Request) {
   let session;
@@ -44,59 +119,46 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing model or script" }, { status: 400 });
   }
 
+  const provider = inferProvider(body.model);
+  let apiKey: string;
+  try {
+    apiKey = requireApiKey(session, provider);
+  } catch {
+    return NextResponse.json(
+      { error: `Provider "${provider}" is not configured. Please add an API key in Settings.` },
+      { status: 401 }
+    );
+  }
+
   const refs = (body.referenceImages ?? []).slice(0, MAX_REFERENCE_IMAGES);
+  const allowedDurations = body.allowedDurations?.length ? body.allowedDurations : [4, 6, 8];
 
   const userText = buildStoryboardUserPrompt({
     script: body.script,
     durationSec: body.durationSec,
-    allowedDurations: body.allowedDurations?.length ? body.allowedDurations : [4, 6, 8],
+    allowedDurations,
     aspectRatio: body.aspectRatio,
     withSubtitle: body.withSubtitle,
     language: body.language,
     referenceImageNames: refs.map((r) => r.name),
   });
 
-  const userParts: Array<
-    { text: string } | { inlineData: { mimeType: string; data: string } }
-  > = [{ text: userText }];
-  for (const r of refs) {
-    userParts.push({
-      inlineData: { mimeType: r.mimeType, data: r.bytesBase64Encoded },
-    });
-  }
-
-  const contents = [
-    ...(body.history ?? []).map((h) => ({
-      role: h.role === "assistant" ? "model" : "user",
-      parts: [{ text: h.content }],
-    })),
-    { role: "user", parts: userParts },
-  ];
-
   try {
-    const raw = (await generateContent({
-      apiKey: session.apiKey,
+    const text = await callChatModel({
       model: body.model,
-      contents,
-      systemInstruction: { parts: [{ text: STORYBOARD_SYSTEM_PROMPT }] },
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: STORYBOARD_RESPONSE_SCHEMA,
-        temperature: 0.7,
-      },
+      apiKey,
+      systemPrompt: STORYBOARD_SYSTEM_PROMPT,
+      userText,
+      history: body.history ?? [],
+      refs,
       signal: req.signal,
-    })) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    const text = raw.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
+    });
     if (!text) {
-      return NextResponse.json({ error: "empty response", raw }, { status: 502 });
+      return NextResponse.json({ error: "empty response from model" }, { status: 502 });
     }
     let storyboard = parseStoryboard(text);
 
-    // Review pass: re-feed the storyboard to the model for an end-to-end audit and correction.
-    // Skipped silently on failure — the first-pass output is still returned.
-    const allowedDurations = body.allowedDurations?.length ? body.allowedDurations : [4, 6, 8];
+    // Review pass — best-effort quality improvement
     try {
       const reviewText = buildStoryboardReviewPrompt({
         storyboard,
@@ -105,19 +167,15 @@ export async function POST(req: Request) {
         language: body.language,
         withSubtitle: body.withSubtitle,
       });
-      const reviewRaw = (await generateContent({
-        apiKey: session.apiKey,
+      const reviewedText = await callChatModel({
         model: body.model,
-        contents: [{ role: "user", parts: [{ text: reviewText }] }],
-        systemInstruction: { parts: [{ text: STORYBOARD_REVIEW_SYSTEM_PROMPT }] },
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: STORYBOARD_RESPONSE_SCHEMA,
-          temperature: 0.4,
-        },
+        apiKey,
+        systemPrompt: STORYBOARD_REVIEW_SYSTEM_PROMPT,
+        userText: reviewText,
+        history: [],
+        refs: [],
         signal: req.signal,
-      })) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-      const reviewedText = reviewRaw.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
+      });
       if (reviewedText) {
         storyboard = parseStoryboard(reviewedText);
       }

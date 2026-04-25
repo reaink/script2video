@@ -129,6 +129,7 @@ export type Messages = {
   sessionsTitle: string;
   sessionsEmpty: string;
   sessionsMessages: string;
+  sessionsVideos: string;
   sessionsDelete: string;
   sessionsNew: string;
 
@@ -156,7 +157,7 @@ const en: Messages = {
 
   welcomeTitle: "Welcome to Script2Video",
   welcomeDesc:
-    "First, configure your Provider and API Key in Settings. Currently only Google Gemini (including Veo video models) is supported.",
+    "First, configure your providers in Settings. Supported chat models: Gemini, GPT-4o/o3, Claude. Video: Veo, Runway, MiniMax Hailuo, Luma Ray. At minimum, add a Gemini key to get started.",
   welcomeGoSettings: "Go to Settings",
 
   settingsTitle: "Settings",
@@ -264,6 +265,7 @@ const en: Messages = {
   sessionsTitle: "Session History",
   sessionsEmpty: "No sessions",
   sessionsMessages: "messages",
+  sessionsVideos: "videos",
   sessionsDelete: "Delete",
   sessionsNew: "+ New Session",
 
@@ -289,7 +291,7 @@ const zh: Messages = {
 
   welcomeTitle: "欢迎使用 Script2Video",
   welcomeDesc:
-    "首次使用需要在设置页配置 Provider 与 API Key。当前仅支持 Google Gemini（含 Veo 视频模型）。",
+    "首次使用需在设置页配置各 Provider 的 API Key。支持对话：Gemini / GPT-4o / Claude；视频：Veo / Runway / MiniMax Hailuo / Luma Ray。最少配置一个 Gemini Key 即可开始。",
   welcomeGoSettings: "去设置",
 
   settingsTitle: "设置",
@@ -395,6 +397,7 @@ const zh: Messages = {
   sessionsTitle: "会话历史",
   sessionsEmpty: "暂无会话",
   sessionsMessages: "条",
+  sessionsVideos: "视频",
   sessionsDelete: "删除",
   sessionsNew: "+ 新建会话",
 

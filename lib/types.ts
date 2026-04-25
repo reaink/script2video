@@ -1,18 +1,31 @@
-export type Provider = "gemini";
+export type Provider = "gemini" | "openai" | "anthropic" | "runway" | "minimax" | "luma";
 
 export interface ProviderConfig {
   provider: Provider;
   apiKey: string;
 }
 
-export interface GeminiModel {
+/** Unified model descriptor across all providers. */
+export interface ModelInfo {
   name: string;
-  baseModelId?: string;
   displayName?: string;
-  description?: string;
-  inputTokenLimit?: number;
-  outputTokenLimit?: number;
+  provider: Provider;
+  /** Gemini-only: used for filtering by capability */
   supportedGenerationMethods?: string[];
+}
+
+/** Alias kept for backward compatibility. */
+export type GeminiModel = ModelInfo;
+
+/** Infer the provider from a model identifier string. */
+export function inferProvider(model: string): Provider {
+  if (model.startsWith("models/") || model.startsWith("gemini-") || model.startsWith("imagen")) return "gemini";
+  if (model.startsWith("gpt-") || /^o[0-9]/.test(model)) return "openai";
+  if (model.startsWith("claude-")) return "anthropic";
+  if (/^gen[0-9]/.test(model) || model === "act_two") return "runway";
+  if (model.startsWith("MiniMax-")) return "minimax";
+  if (model.startsWith("ray-")) return "luma";
+  return "gemini";
 }
 
 export type ModelKind = "chat" | "video" | "image";
@@ -23,14 +36,14 @@ export interface AspectRatio {
 }
 
 export interface VideoSettings {
-  videoModel: string; // e.g. "models/veo-3.1-generate-preview"
+  videoModel: string; // e.g. "models/veo-3.1-generate-preview", "gen4.5", "ray-2"
   aspectRatio: "16:9" | "9:16";
-  durationSec: 4 | 5 | 6 | 8;
+  durationSec: number; // allowed values depend on model; providers snap internally
   resolution: "720p" | "1080p" | "4k";
   withSubtitle: boolean;
   concurrency: number;
   autoContinue: boolean;
-  withReferenceFrames: boolean; // 是否用 Nano Banana 做首尾帧
+  withReferenceFrames: boolean;
 }
 
 export interface ChatSettings {

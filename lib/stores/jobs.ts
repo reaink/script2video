@@ -3,14 +3,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { extractLastFrame } from "@/lib/client/media";
-import { fetchAndCacheVideo } from "@/lib/db/videoCache";
+import { evictVideo, fetchAndCacheVideo } from "@/lib/db/videoCache";
 import type { ReferenceImage, Shot, ShotJob, ShotJobStatus } from "@/lib/types";
 
 export interface JobConfig {
   videoModel: string;
   imageModel?: string; // Nano Banana, e.g. "gemini-2.5-flash-image-preview"
   aspectRatio: "16:9" | "9:16";
-  durationSec: 4 | 5 | 6 | 8;
+  durationSec: number;
   resolution?: "720p" | "1080p" | "4k";
   withReferenceFrames: boolean;
   /** chainFrames=true forces sequential execution and feeds previous shot's last frame as next shot's first frame. */
@@ -39,6 +39,11 @@ interface RunState {
   resume: () => void;
   /** The sessionId whose jobs are currently loaded. */
   sessionId: string | null;
+  /** video URIs grouped by sessionId, used to evict cache when a session is deleted. */
+  sessionVideoUris: Record<string, string[]>;
+  /** generation progress per sessionId: { done, total } */
+  sessionProgress: Record<string, { done: number; total: number }>;
+  clearSessionCache: (sessionId: string) => Promise<void>;
 }
 
 const POLL_INTERVAL = 6000;
@@ -57,7 +62,18 @@ export const useJobsStore = create<RunState>()(
       const lastFrameByIndex: Record<number, ImagePart> = {};
 
       const setJob = (shotIndex: number, patch: Partial<ShotJob>) =>
-        set((s) => ({ jobs: { ...s.jobs, [shotIndex]: { ...s.jobs[shotIndex], ...patch } } }));
+        set((s) => {
+          const updated = { jobs: { ...s.jobs, [shotIndex]: { ...s.jobs[shotIndex], ...patch } } };
+          if (patch.status === "done" && s.config) {
+            const sid = s.config.sessionId;
+            const curr = s.sessionProgress[sid] ?? { done: 0, total: s.shots.length };
+            return {
+              ...updated,
+              sessionProgress: { ...s.sessionProgress, [sid]: { ...curr, done: curr.done + 1 } },
+            };
+          }
+          return updated;
+        });
 
       const generateNanoBananaFrame = async (
         cfg: JobConfig,
@@ -142,6 +158,12 @@ export const useJobsStore = create<RunState>()(
               videoBlobUrl: blobUrl,
               finishedAt: Date.now(),
             });
+            // Track video URI so it can be evicted when the session is deleted.
+            set((s) => {
+              const sid = cfg.sessionId;
+              const existing = s.sessionVideoUris[sid] ?? [];
+              return { sessionVideoUris: { ...s.sessionVideoUris, [sid]: [...existing, uri] } };
+            });
 
             // Extract tail frame for the next shot in chain mode.
             if (cfg.chainFrames) {
@@ -167,11 +189,11 @@ export const useJobsStore = create<RunState>()(
 
         // Snap shot duration to the nearest allowed value based on model capabilities.
         const snapDuration = (d: number): number => {
-          const allowed = cfg.videoModel.includes("lite")
-            ? [5, 6, 8]
-            : cfg.videoModel.includes("veo-3.0")
-              ? [8]
-              : [4, 6, 8];
+          const m = cfg.videoModel;
+          if (/^gen[0-9]/.test(m) || m === "act_two") return d <= 7 ? 5 : 10; // Runway
+          if (m.startsWith("MiniMax-")) return d <= 7 ? 6 : 10; // MiniMax
+          if (m.startsWith("ray-")) return Math.min(Math.max(Math.round(d), 1), 9); // Luma
+          const allowed = m.includes("lite") ? [5, 6, 8] : m.includes("veo-3.0") ? [8] : [4, 6, 8];
           return allowed.reduce((best, v) => (Math.abs(v - d) < Math.abs(best - d) ? v : best));
         };
         const durationSeconds = snapDuration(shot.durationSec);
@@ -251,6 +273,17 @@ export const useJobsStore = create<RunState>()(
         sessionId: null,
         running: false,
         startedAt: null,
+        sessionVideoUris: {},
+        sessionProgress: {},
+        clearSessionCache: async (sessionId) => {
+          const uris = get().sessionVideoUris[sessionId] ?? [];
+          await Promise.all(uris.map(evictVideo));
+          set((s) => {
+            const { [sessionId]: _v, ...restVideos } = s.sessionVideoUris;
+            const { [sessionId]: _p, ...restProgress } = s.sessionProgress;
+            return { sessionVideoUris: restVideos, sessionProgress: restProgress };
+          });
+        },
         start: async (shots, config) => {
           cancelled = false;
           for (const k of Object.keys(lastFrameByIndex)) delete lastFrameByIndex[Number(k)];
@@ -258,14 +291,15 @@ export const useJobsStore = create<RunState>()(
           shots.forEach((s) => {
             initialJobs[s.index] = { shotIndex: s.index, status: "queued" };
           });
-          set({
+          set((s) => ({
             jobs: initialJobs,
             shots,
             config,
             sessionId: config.sessionId,
             running: true,
             startedAt: Date.now(),
-          });
+            sessionProgress: { ...s.sessionProgress, [config.sessionId]: { done: 0, total: shots.length } },
+          }));
           if (config.chainFrames) {
             await drainSequential([...shots]);
           } else {
@@ -325,6 +359,8 @@ export const useJobsStore = create<RunState>()(
     {
       name: "s2v_jobs_v1",
       partialize: (s) => ({
+        sessionVideoUris: s.sessionVideoUris,
+        sessionProgress: s.sessionProgress,
         jobs: Object.fromEntries(
           Object.entries(s.jobs).map(([k, j]) => {
             // Strip videoBlobUrl — blob: URLs are session-only and become invalid after refresh.
@@ -342,12 +378,22 @@ export const useJobsStore = create<RunState>()(
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         state.running = false;
-        // Strip stale blob: URLs — they are session-only and invalid after refresh.
-        // ShotPlayer will re-create fresh object URLs from IndexedDB.
         for (const job of Object.values(state.jobs)) {
           delete job.videoBlobUrl;
         }
-        // Schedule resume on next tick so the store is fully constructed.
+        // Rebuild sessionProgress from persisted jobs if missing (e.g. sessions created before this field existed).
+        if (state.sessionId && !state.sessionProgress[state.sessionId]) {
+          const jobs = Object.values(state.jobs);
+          if (jobs.length > 0) {
+            state.sessionProgress = {
+              ...state.sessionProgress,
+              [state.sessionId]: {
+                done: jobs.filter((j) => j.status === "done").length,
+                total: jobs.length,
+              },
+            };
+          }
+        }
         if (typeof window !== "undefined") {
           setTimeout(() => useJobsStore.getState().resume(), 0);
         }

@@ -3,6 +3,7 @@
 import { Button, Drawer, useOverlayState } from "@heroui/react";
 import { useEffect } from "react";
 import { useSessionsStore } from "@/lib/stores/sessions";
+import { useJobsStore } from "@/lib/stores/jobs";
 import { useI18n } from "@/lib/i18n";
 
 export function SessionsPanel() {
@@ -14,6 +15,8 @@ export function SessionsPanel() {
   const newSession = useSessionsStore((s) => s.newSession);
   const load = useSessionsStore((s) => s.load);
   const loaded = useSessionsStore((s) => s.loaded);
+  const sessionProgress = useJobsStore((s) => s.sessionProgress);
+  const sessionVideoUris = useJobsStore((s) => s.sessionVideoUris);
   const { t } = useI18n();
 
   useEffect(() => {
@@ -22,9 +25,20 @@ export function SessionsPanel() {
 
   return (
     <>
-      <Button variant="outline" size="sm" onPress={overlay.open}>
-        {t.sessionsLabel}{sessions.length > 0 ? ` (${sessions.length})` : ""}
-      </Button>
+      <div className="flex items-center gap-1">
+        <Button variant="outline" size="sm" onPress={overlay.open}>
+          {t.sessionsLabel}{sessions.length > 0 ? ` (${sessions.length})` : ""}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onPress={() => newSession()}
+          aria-label={t.sessionsNew}
+          title={t.sessionsNew}
+        >
+          +
+        </Button>
+      </div>
       <Drawer state={overlay}>
         <Drawer.Backdrop>
           <Drawer.Content placement="left">
@@ -39,35 +53,49 @@ export function SessionsPanel() {
                 {sessions.length === 0 && (
                   <div className="text-sm text-default-500">{t.sessionsEmpty}</div>
                 )}
-                {sessions.map((s) => (
-                  <div
-                    key={s.id}
-                    className={`group flex items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-default-100 ${s.id === activeId ? "bg-default-100" : ""
-                      }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        switchTo(s.id);
-                        overlay.close();
-                      }}
-                      className="flex-1 truncate text-left"
+                {sessions.map((s) => {
+                  const isActive = s.id === activeId;
+                  const progress = sessionProgress[s.id];
+                  const cachedCount = (sessionVideoUris[s.id] ?? []).length;
+                  const progressLabel = progress
+                    ? `${progress.done}/${progress.total}`
+                    : cachedCount > 0
+                      ? String(cachedCount)
+                      : "0";
+                  return (
+                    <div
+                      key={s.id}
+                      className={`group flex items-center gap-2 rounded-md px-2 py-2 text-sm ${isActive
+                        ? "border-l-4 border-accent-500 bg-primary/10 pl-1.5"
+                        : "hover:bg-default-100"
+                        }`}
                     >
-                      <div className="truncate font-medium">{s.title}</div>
-                      <div className="text-xs text-default-500">
-                        {s.messages.length} {t.sessionsMessages} · {new Date(s.updatedAt).toLocaleString()}
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void remove(s.id)}
-                      className="text-xs text-default-500 opacity-0 group-hover:opacity-100"
-                      aria-label={t.sessionsDelete}
-                    >
-                      {t.sessionsDelete}
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          switchTo(s.id);
+                          overlay.close();
+                        }}
+                        className="flex-1 truncate text-left"
+                      >
+                        <div className={`truncate font-medium ${isActive ? "text-primary" : ""}`}>
+                          {s.title}
+                        </div>
+                        <div className="text-xs text-default-500">
+                          {s.messages.length} {t.sessionsMessages} · {t.sessionsVideos} {progressLabel}
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void remove(s.id)}
+                        className="text-xs text-default-500 opacity-0 group-hover:opacity-100"
+                        aria-label={t.sessionsDelete}
+                      >
+                        {t.sessionsDelete}
+                      </button>
+                    </div>
+                  );
+                })}
               </Drawer.Body>
               <Drawer.Footer>
                 <Button

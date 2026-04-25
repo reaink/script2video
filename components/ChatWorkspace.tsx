@@ -39,7 +39,7 @@ interface UiSettings {
   videoModel?: string;
   imageModel?: string;
   aspectRatio: "16:9" | "9:16";
-  durationSec: 4 | 5 | 6 | 8;
+  durationSec: number;
   withSubtitle: boolean;
   withReferenceFrames: boolean;
   /** Sequential mode: chain previous shot's last frame as next shot's first frame. */
@@ -258,11 +258,14 @@ export function ChatWorkspace() {
     void refreshModels();
   }, [refreshModels]);
 
-  const allowedDurations = useMemo<(4 | 5 | 6 | 8)[]>(() => {
+  const allowedDurations = useMemo<number[]>(() => {
     const m = settings.videoModel ?? "";
+    if (/^gen[0-9]/.test(m) || m === "act_two") return [5, 10]; // Runway
+    if (m.startsWith("MiniMax-")) return [6, 10]; // MiniMax
+    if (m.startsWith("ray-")) return [5, 9]; // Luma (range 1-9, show endpoints)
     if (m.includes("lite")) return [5, 6, 8];
     if (m.includes("veo-3.0")) return [8];
-    return [4, 6, 8];
+    return [4, 6, 8]; // Gemini default
   }, [settings.videoModel]);
 
   const onPickFiles = useCallback(
@@ -318,7 +321,7 @@ export function ChatWorkspace() {
     }
     void startJobs(sb.shots, {
       videoModel: settings.videoModel,
-      imageModel: settings.withReferenceFrames ? settings.imageModel : undefined,
+      imageModel: settings.withReferenceFrames && models?.image?.length ? settings.imageModel : undefined,
       aspectRatio: settings.aspectRatio,
       durationSec: settings.durationSec,
       withReferenceFrames: settings.withReferenceFrames,
@@ -442,7 +445,7 @@ export function ChatWorkspace() {
           <Select
             value={String(settings.durationSec)}
             onChange={(k) =>
-              k && !Array.isArray(k) && setSettings((s) => ({ ...s, durationSec: Number(k) as 4 | 5 | 6 | 8 }))
+              k && !Array.isArray(k) && setSettings((s) => ({ ...s, durationSec: Number(k) }))
             }
           >
             <Label>{t.paramsDuration}</Label>
@@ -508,6 +511,7 @@ export function ChatWorkspace() {
           <Switch
             isSelected={settings.withReferenceFrames}
             onChange={(v) => setSettings((s) => ({ ...s, withReferenceFrames: v }))}
+            isDisabled={!models?.image?.length}
             className="flex w-full items-center justify-between"
           >
             <Switch.Content>
