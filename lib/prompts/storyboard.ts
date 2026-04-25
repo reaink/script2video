@@ -53,13 +53,16 @@ Write a complete English veoPrompt per shot covering subject, action, style, cam
 - IDLE BEHAVIOR: after finishing dialogue the on-screen character holds a natural calm expression and idle posture — no unnatural mouth movement, strange gestures, or extraneous sounds.
 - CONTINUITY: ambiance and SFX across all shots must be subtle and consistent (same room-tone family, same intensity). No sudden loud impacts or music stings unless the script explicitly demands.
 
+## VOICE IDENTITY (critical for consistency)
+At the start of planning, derive a single voice descriptor from the script's speaker/presenter (e.g., gender, approximate age, accent, tone, pace). Then include this EXACT descriptor phrase in the veoPrompt of EVERY shot — both presenter shots and B-roll voice-overs — so Veo generates a consistent voice across all clips. Example: "The speaking voice is a confident male voice, early 30s, clear American English, warm professional tone, moderate pace."
+
 ## DIALOGUE CONTRACT (critical)
 - dialogue[]: EXACT verbatim lines in the user-requested language — no translation, no paraphrase.
 - subtitle: verbatim dialogue lines joined by single space, same language. Empty if no dialogue.
 - veoPrompt speech tag depends on whether a visible speaker is on screen:
   - ON-SCREEN speaker (presenter/character visible and speaking): end veoPrompt with 'The {speaker} says in {LanguageName}: "<line>"' per line, joined by ' Then '. This instructs Veo to generate lip-sync. Quoted text must be byte-identical to dialogue[i].line.
-  - B-ROLL / no visible speaker (logo shots, UI shots, product shots, abstract visuals): end veoPrompt with 'Voice-over in {LanguageName}, no visible speaker: "<line>"'. This prevents Veo from inserting an unexpected person into the frame. Quoted text must be byte-identical to dialogue[i].line.
-  - Never use the on-screen speaker tag on a B-roll shot — it will cause Veo to hallucinate a speaking figure.
+  - B-ROLL / no visible speaker (logo shots, UI shots, product shots, abstract visuals): if no person is described anywhere in the veoPrompt body, MUST append "no additional people, no background persons, no unscripted human figures in this shot". If the reference presenter IS intentionally present in the B-roll (e.g., pointing at a screen), describe them explicitly and use the ON-SCREEN speaker tag instead. Then end with 'Voice-over in {LanguageName}, no visible speaker: "<line>"'. Quoted text must be byte-identical to dialogue[i].line.
+  - GENERAL RULE for ALL shots: every person who appears on screen must be explicitly described in the veoPrompt. Append "no unscripted background persons or crowd members beyond those described above" to every shot's veoPrompt to prevent Veo from hallucinating additional figures.
 
 ## SPEECH TIMING (critical)
 Speaker starts within 0.3s and finishes before the last 0.5s. Append to veoPrompt: "the speaker begins talking immediately, no opening pause; the line ends just before the clip ends, no trailing silence".
@@ -78,12 +81,13 @@ export const STORYBOARD_REVIEW_SYSTEM_PROMPT = `You are a senior film editor per
 4. Subject visual identity: verify at least one B-roll shot establishes the visual identity of any named product, service, AI, or brand mentioned in the script. Add one if missing.
 5. Environment grounding: abstract B-roll (data flows, AI cores, network graphs) must be shown on an in-scene surface (holographic display, studio monitor, screen). Fix any elements floating in a featureless void unless style demands it.
 6. Audio: (a) voice only under dialogue — no music or ambient hum; (b) complete silence after last spoken word — no trailing ambiance; (c) presenter holds natural calm idle after dialogue; (d) ambiance/SFX subtle and consistent across all shots.
-7. Dialogue↔Veo: every dialogue[i].line must appear VERBATIM (byte-identical) inside veoPrompt. For shots with a visible on-screen speaker use 'The {speaker} says in {LanguageName}: "<line>"'. For B-roll shots with no visible speaker use 'Voice-over in {LanguageName}, no visible speaker: "<line>"'. Fix any B-roll shot that incorrectly uses the on-screen speaker tag — it causes Veo to hallucinate a figure.
-8. Subtitle/language: subtitle = verbatim dialogue joined by single space in the requested language.
-9. Speech timing: every dialogue shot must direct the speaker to begin within 0.3s and finish before the last 0.5s. Add if missing.
-10. Visual richness: every veoPrompt must be specific and sensory; add organic in-scene props when the topic supports it.
-11. Coherence: continuityHint must match adjacent shots. Redistribute shots if pacing is off.
-12. Forbidden: remove any obscene hand gestures.
+7. Voice identity: every shot's veoPrompt must contain the same voice descriptor phrase (gender, age, accent, tone, pace). If missing or inconsistent across shots, unify them all to match the presenter described in the script or reference image.
+8. Dialogue↔Veo: every dialogue[i].line must appear VERBATIM (byte-identical) inside veoPrompt. For shots with a visible on-screen speaker use 'The {speaker} says in {LanguageName}: "<line>"'. For B-roll shots with no person described: verify "no additional people, no background persons" clause is present and the tag is 'Voice-over in {LanguageName}, no visible speaker: "<line>"'. Verify every shot (presenter or B-roll) contains "no unscripted background persons" clause. Fix any missing constraints.
+9. Subtitle/language: subtitle = verbatim dialogue joined by single space in the requested language.
+10. Speech timing: every dialogue shot must direct the speaker to begin within 0.3s and finish before the last 0.5s. Add if missing.
+11. Visual richness: every veoPrompt must be specific and sensory; add organic in-scene props when the topic supports it.
+12. Coherence: continuityHint must match adjacent shots. Redistribute shots if pacing is off.
+13. Forbidden: remove any obscene hand gestures.
 
 Output the COMPLETE revised storyboard in STRICT JSON. No markdown, no commentary. Preserve detectedStyle and language unless clearly wrong.`;
 
