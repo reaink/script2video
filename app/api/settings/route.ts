@@ -6,6 +6,8 @@ import { validateApiKey as validateAnthropic } from "@/lib/providers/anthropic";
 import { validateApiKey as validateRunway } from "@/lib/providers/runway";
 import { validateApiKey as validateMiniMax } from "@/lib/providers/minimax";
 import { validateApiKey as validateLuma } from "@/lib/providers/luma";
+import { validateApiKey as validateFal } from "@/lib/providers/fal";
+import { validateApiKey as validateStability } from "@/lib/providers/stability";
 import type { Provider } from "@/lib/types";
 
 async function validateProvider(provider: Provider, apiKey: string): Promise<void> {
@@ -27,6 +29,12 @@ async function validateProvider(provider: Provider, apiKey: string): Promise<voi
       break;
     case "luma":
       await validateLuma(apiKey);
+      break;
+    case "fal":
+      await validateFal(apiKey);
+      break;
+    case "stability":
+      await validateStability(apiKey);
       break;
     default:
       throw new Error(`Unknown provider: ${provider as string}`);
@@ -50,7 +58,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = (await req.json()) as { provider?: string; apiKey?: string };
-  const validProviders: Provider[] = ["gemini", "openai", "anthropic", "runway", "minimax", "luma"];
+  const validProviders: Provider[] = ["gemini", "openai", "anthropic", "runway", "minimax", "luma", "fal", "stability"];
   if (!body.provider || !validProviders.includes(body.provider as Provider) || !body.apiKey) {
     return NextResponse.json({ error: "invalid input" }, { status: 400 });
   }

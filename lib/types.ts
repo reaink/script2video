@@ -1,4 +1,4 @@
-export type Provider = "gemini" | "openai" | "anthropic" | "runway" | "minimax" | "luma";
+export type Provider = "gemini" | "openai" | "anthropic" | "runway" | "minimax" | "luma" | "fal" | "stability";
 
 export interface ProviderConfig {
   provider: Provider;
@@ -25,6 +25,8 @@ export function inferProvider(model: string): Provider {
   if (/^gen[0-9]/.test(model) || model === "act_two") return "runway";
   if (model.startsWith("MiniMax-")) return "minimax";
   if (model.startsWith("ray-")) return "luma";
+  if (model.startsWith("fal-ai/")) return "fal";
+  if (model.startsWith("stability/")) return "stability";
   return "gemini";
 }
 

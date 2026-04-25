@@ -63,3 +63,68 @@ export async function generateContent(args: {
   };
   return data.choices?.[0]?.message?.content ?? "";
 }
+
+export const OPENAI_IMAGE_MODELS = [
+  { name: "gpt-image-1", displayName: "GPT Image 1", provider: "openai" as const },
+] as const;
+
+function aspectRatioToSize(ar?: "16:9" | "9:16"): string {
+  if (ar === "16:9") return "1536x1024";
+  if (ar === "9:16") return "1024x1536";
+  return "1024x1024";
+}
+
+function base64ToBlob(b64: string, mimeType: string): Blob {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+export async function generateImage(args: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  aspectRatio?: "16:9" | "9:16";
+  referenceImages?: { mimeType: string; bytesBase64Encoded: string }[];
+}): Promise<{ mimeType: string; bytesBase64Encoded: string }> {
+  const size = aspectRatioToSize(args.aspectRatio);
+  const refs = (args.referenceImages ?? []).filter((r) => r.bytesBase64Encoded);
+
+  let res: Response;
+  if (refs.length > 0) {
+    // Use edits endpoint with the first reference image as input
+    const form = new FormData();
+    form.append("model", args.model);
+    form.append("prompt", args.prompt);
+    form.append("n", "1");
+    form.append("size", size);
+    const blob = base64ToBlob(refs[0].bytesBase64Encoded, refs[0].mimeType);
+    form.append("image[]", blob, "frame.png");
+    res = await fetch(`${BASE}/images/edits`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${args.apiKey}` },
+      body: form,
+      cache: "no-store",
+    });
+  } else {
+    res = await fetch(`${BASE}/images/generations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${args.apiKey}`,
+      },
+      body: JSON.stringify({ model: args.model, prompt: args.prompt, n: 1, size, output_format: "png" }),
+      cache: "no-store",
+    });
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenAI generateImage ${res.status}: ${text.slice(0, 400)}`);
+  }
+  const data = (await res.json()) as { data?: { b64_json?: string }[] };
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error("OpenAI generateImage: no image data returned");
+  return { mimeType: "image/png", bytesBase64Encoded: b64 };
+}

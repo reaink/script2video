@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireSession, requireApiKey } from "@/lib/server/session";
 import { generateContent, predictImage } from "@/lib/providers/gemini";
+import { generateImage as openaiGenerateImage } from "@/lib/providers/openai";
+import { generateImage as falGenerateImage } from "@/lib/providers/fal";
+import { generateImage as stabilityGenerateImage } from "@/lib/providers/stability";
+import { inferProvider } from "@/lib/types";
 
 interface RefImage {
   mimeType: string;
@@ -45,7 +49,74 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "missing fields" }, { status: 400 });
   }
 
-  // Image generation is Gemini-only
+  // Route to OpenAI if model is gpt-image-1
+  if (body.model === "gpt-image-1") {
+    let apiKey: string;
+    try {
+      apiKey = requireApiKey(session, "openai");
+    } catch {
+      return NextResponse.json({ error: "OpenAI is not configured." }, { status: 401 });
+    }
+    try {
+      const out = await openaiGenerateImage({
+        apiKey,
+        model: body.model,
+        prompt: body.prompt,
+        aspectRatio: body.aspectRatio,
+        referenceImages: body.referenceImages,
+      });
+      return NextResponse.json(out);
+    } catch (e) {
+      return NextResponse.json({ error: String((e as Error).message) }, { status: 500 });
+    }
+  }
+
+  // Route to fal.ai
+  const detectedProvider = inferProvider(body.model);
+  if (detectedProvider === "fal") {
+    let apiKey: string;
+    try {
+      apiKey = requireApiKey(session, "fal");
+    } catch {
+      return NextResponse.json({ error: "fal.ai is not configured." }, { status: 401 });
+    }
+    try {
+      const out = await falGenerateImage({
+        apiKey,
+        model: body.model,
+        prompt: body.prompt,
+        aspectRatio: body.aspectRatio,
+        referenceImages: body.referenceImages,
+      });
+      return NextResponse.json(out);
+    } catch (e) {
+      return NextResponse.json({ error: String((e as Error).message) }, { status: 500 });
+    }
+  }
+
+  // Route to Stability AI
+  if (detectedProvider === "stability") {
+    let apiKey: string;
+    try {
+      apiKey = requireApiKey(session, "stability");
+    } catch {
+      return NextResponse.json({ error: "Stability AI is not configured." }, { status: 401 });
+    }
+    try {
+      const out = await stabilityGenerateImage({
+        apiKey,
+        model: body.model,
+        prompt: body.prompt,
+        aspectRatio: body.aspectRatio,
+        referenceImages: body.referenceImages,
+      });
+      return NextResponse.json(out);
+    } catch (e) {
+      return NextResponse.json({ error: String((e as Error).message) }, { status: 500 });
+    }
+  }
+
+  // Image generation is Gemini-only for other models
   let apiKey: string;
   try {
     apiKey = requireApiKey(session, "gemini");

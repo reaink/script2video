@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireSession } from "@/lib/server/session";
 import { listModels } from "@/lib/providers/gemini";
-import { OPENAI_CHAT_MODELS } from "@/lib/providers/openai";
+import { OPENAI_CHAT_MODELS, OPENAI_IMAGE_MODELS } from "@/lib/providers/openai";
 import { ANTHROPIC_CHAT_MODELS } from "@/lib/providers/anthropic";
 import { RUNWAY_VIDEO_MODELS } from "@/lib/providers/runway";
 import { MINIMAX_VIDEO_MODELS } from "@/lib/providers/minimax";
 import { LUMA_VIDEO_MODELS } from "@/lib/providers/luma";
+import { FAL_IMAGE_MODELS } from "@/lib/providers/fal";
+import { STABILITY_IMAGE_MODELS } from "@/lib/providers/stability";
 import type { ModelInfo } from "@/lib/types";
 
 export async function GET() {
@@ -47,9 +49,10 @@ export async function GET() {
     }
   }
 
-  // OpenAI: static chat models
+  // OpenAI: static chat + image models
   if (session.apiKeys.openai) {
     chat.push(...OPENAI_CHAT_MODELS);
+    image.push(...OPENAI_IMAGE_MODELS);
   }
 
   // Anthropic: static chat models
@@ -70,6 +73,16 @@ export async function GET() {
   // Luma: static video models
   if (session.apiKeys.luma) {
     video.push(...LUMA_VIDEO_MODELS);
+  }
+
+  // fal.ai: static image models
+  if (session.apiKeys.fal) {
+    image.push(...FAL_IMAGE_MODELS);
+  }
+
+  // Stability AI: static image models
+  if (session.apiKeys.stability) {
+    image.push(...STABILITY_IMAGE_MODELS);
   }
 
   return NextResponse.json({ chat, video, image });

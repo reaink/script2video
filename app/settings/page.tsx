@@ -27,7 +27,7 @@ const PROVIDER_META: ProviderMeta[] = [
   {
     id: "gemini",
     label: "Google Gemini",
-    description: "Chat + image generation + Veo video generation",
+    description: "Chat: gemini-2.5-pro/flash · Video: Veo 2/3 · Image: Imagen 4, Flash Image",
     link: "https://aistudio.google.com/apikey",
     linkLabel: "aistudio.google.com/apikey",
     placeholder: "AIzaSy...",
@@ -35,7 +35,7 @@ const PROVIDER_META: ProviderMeta[] = [
   {
     id: "openai",
     label: "OpenAI",
-    description: "Chat models: GPT-4.1, GPT-4o, o3, o4-mini",
+    description: "Chat: GPT-4.1, GPT-4o, o3, o4-mini · Image: gpt-image-1 (img2img)",
     link: "https://platform.openai.com/api-keys",
     linkLabel: "platform.openai.com/api-keys",
     placeholder: "sk-...",
@@ -43,7 +43,7 @@ const PROVIDER_META: ProviderMeta[] = [
   {
     id: "anthropic",
     label: "Anthropic",
-    description: "Chat models: Claude Opus/Sonnet/Haiku 4.5",
+    description: "Chat: Claude Opus 4.5, Sonnet 4.5, Haiku 3.5",
     link: "https://console.anthropic.com/settings/keys",
     linkLabel: "console.anthropic.com/settings/keys",
     placeholder: "sk-ant-...",
@@ -51,7 +51,7 @@ const PROVIDER_META: ProviderMeta[] = [
   {
     id: "runway",
     label: "Runway",
-    description: "Video generation: Gen-4.5, Gen-4 Turbo",
+    description: "Video: Gen-4.5 (5s/10s), Gen-4 Turbo (5s/10s)",
     link: "https://app.runwayml.com/settings",
     linkLabel: "app.runwayml.com/settings",
     placeholder: "key_...",
@@ -59,7 +59,7 @@ const PROVIDER_META: ProviderMeta[] = [
   {
     id: "minimax",
     label: "MiniMax (Hailuo)",
-    description: "Video generation: Hailuo 2.3, Hailuo 02",
+    description: "Video: Hailuo-2.3, Hailuo-2.3Fast, Hailuo-02 (6s/10s)",
     link: "https://platform.minimax.io/user-center/basic-information/interface-key",
     linkLabel: "platform.minimax.io",
     placeholder: "eyJ...",
@@ -67,10 +67,26 @@ const PROVIDER_META: ProviderMeta[] = [
   {
     id: "luma",
     label: "Luma AI (Ray)",
-    description: "Video generation: Ray 2, Ray 2 Flash",
+    description: "Video: Ray 2, Ray 2 Flash (5–9s)",
     link: "https://lumalabs.ai/dream-machine/api/keys",
     linkLabel: "lumalabs.ai/dream-machine/api/keys",
     placeholder: "luma-...",
+  },
+  {
+    id: "fal",
+    label: "fal.ai",
+    description: "Image: FLUX Kontext Pro (img2img), FLUX Pro",
+    link: "https://fal.ai/dashboard/keys",
+    linkLabel: "fal.ai/dashboard/keys",
+    placeholder: "...",
+  },
+  {
+    id: "stability",
+    label: "Stability AI",
+    description: "Image: Stable Image Ultra, Core · SD3 Large (img2img)",
+    link: "https://platform.stability.ai/account/keys",
+    linkLabel: "platform.stability.ai/account/keys",
+    placeholder: "sk-...",
   },
 ];
 
@@ -150,7 +166,7 @@ export default function SettingsPage() {
               const isClearing = clearing[meta.id];
               return (
                 <Card key={meta.id}>
-                  <Card.Content className="flex flex-col gap-4 p-5">
+                  <Card.Content className="flex flex-col gap-4">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2 font-semibold">
@@ -214,7 +230,7 @@ export default function SettingsPage() {
 
         <Tabs.Panel id="about">
           <Card className="mt-4">
-            <Card.Content className="space-y-2 p-6 text-sm text-default-600">
+            <Card.Content className="space-y-2 text-sm text-default-600">
               <p>Script2Video — Split scripts into shots with any supported chat model, generate videos with Veo, Runway, MiniMax, or Luma.</p>
               <p>{t.settingsAboutLine2}</p>
               <p>{t.settingsAboutLine3}</p>

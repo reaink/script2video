@@ -164,7 +164,7 @@ export function JobsPanel({ triggerLabel, activeSessionId }: Props) {
                   const job = jobs[s.index];
                   const status = job?.status ?? "queued";
                   return (
-                    <Card key={s.index}>
+                    <Card key={s.index} variant="secondary">
                       <Card.Content className="space-y-2 text-sm">
                         <div className="flex items-center justify-between">
                           <div className="font-semibold">

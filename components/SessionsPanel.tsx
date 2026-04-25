@@ -34,7 +34,6 @@ export function SessionsPanel() {
           size="sm"
           onPress={() => newSession()}
           aria-label={t.sessionsNew}
-          title={t.sessionsNew}
         >
           +
         </Button>
