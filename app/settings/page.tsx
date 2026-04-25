@@ -96,7 +96,7 @@ export default function SettingsPage() {
           <Card className="mt-4">
             <Card.Content className="flex flex-col gap-5 p-6">
               <Select
-                className="w-[260px]"
+                className="w-65"
                 value={provider}
                 onChange={(k) => k && !Array.isArray(k) && setProvider(k as "gemini")}
               >
@@ -152,7 +152,7 @@ export default function SettingsPage() {
 
               <div className="flex gap-2">
                 <Button variant="primary" onPress={save} isDisabled={saving}>
-                  {saving ? <Spinner size="sm" /> : "保存并验证"}
+                  {saving ? <Spinner size="sm" color="current" /> : "保存并验证"}
                 </Button>
                 <Button
                   variant="ghost"
