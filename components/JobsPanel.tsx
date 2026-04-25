@@ -8,18 +8,12 @@ import { buildShotVtt, buildFullSrt, buildFullVtt, vttToDataUrl } from "@/lib/ut
 import { downloadBlob, exportConcatenated } from "@/lib/client/exportVideo";
 import type { ExportProgress, ExportShot } from "@/lib/client/exportVideo";
 import type { Shot } from "@/lib/types";
+import { useI18n } from "@/lib/i18n";
 
 interface Props {
   triggerLabel?: string;
   activeSessionId?: string | null;
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  queued: "排队中",
-  running: "生成中",
-  done: "完成",
-  failed: "失败",
-};
 
 const STATUS_COLOR: Record<string, "default" | "accent" | "success" | "warning" | "danger"> = {
   queued: "default",
@@ -28,7 +22,8 @@ const STATUS_COLOR: Record<string, "default" | "accent" | "success" | "warning" 
   failed: "danger",
 };
 
-export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId }: Props) {
+
+export function JobsPanel({ triggerLabel, activeSessionId }: Props) {
   const overlay = useOverlayState();
   const jobs = useJobsStore((s) => s.jobs);
   const allShots = useJobsStore((s) => s.shots);
@@ -38,6 +33,14 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
   const retry = useJobsStore((s) => s.retry);
   const reset = useJobsStore((s) => s.reset);
   const regenerate = useJobsStore((s) => s.regenerate);
+  const { t } = useI18n();
+
+  const STATUS_LABEL: Record<string, string> = {
+    queued: t.jobsStatusQueued,
+    running: t.jobsStatusRunning,
+    done: t.jobsStatusDone,
+    failed: t.jobsStatusFailed,
+  };
 
   // Only show jobs that belong to the currently active chat session.
   const shots = activeSessionId && activeSessionId !== storeSessionId ? [] : allShots;
@@ -97,7 +100,7 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
   return (
     <>
       <Button variant="outline" size="sm" onPress={overlay.open} isDisabled={total === 0}>
-        {triggerLabel}
+        {triggerLabel ?? t.jobsTrigger}
         {total > 0 && (
           <Chip size="sm" variant="soft" className="ml-2">
             {done}/{total}
@@ -110,16 +113,16 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
             <Drawer.Dialog>
               <Drawer.Header>
                 <div className="flex w-full items-center justify-between">
-                  <h3 className="text-base font-semibold">生成进度</h3>
+                  <h3 className="text-base font-semibold">{t.jobsTitle}</h3>
                   <Drawer.CloseTrigger />
                 </div>
               </Drawer.Header>
               <Drawer.Body className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <Chip variant="soft">总数 {total}</Chip>
-                  <Chip variant="soft" color="success">完成 {done}</Chip>
+                  <Chip variant="soft">{t.jobsTotalLabel} {total}</Chip>
+                  <Chip variant="soft" color="success">{t.jobsDoneLabel} {done}</Chip>
                   {failed > 0 && (
-                    <Chip variant="soft" color="danger">失败 {failed}</Chip>
+                    <Chip variant="soft" color="danger">{t.jobsFailedLabel} {failed}</Chip>
                   )}
                   {running && <Spinner size="sm" />}
                 </div>
@@ -135,17 +138,17 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
                     >
                       {exportProgress
                         ? exportProgress.phase === "done"
-                          ? "完成"
-                          : `${exportProgress.phase === "preparing" ? "准备" : "编码"} ${exportProgress.shot}/${exportProgress.total}`
-                        : `导出整片 (${done}/${total})`}
+                          ? t.jobsExportDone
+                          : `${exportProgress.phase === "preparing" ? t.jobsExportPreparing : t.jobsExportEncoding} ${exportProgress.shot}/${exportProgress.total}`
+                        : `${t.jobsExport} (${done}/${total})`}
                     </Button>
                     {hasSubtitles && (
                       <>
                         <Button size="sm" variant="outline" onPress={exportSrt} isDisabled={!allDone}>
-                          导出 SRT
+                          {t.jobsExportSrt}
                         </Button>
                         <Button size="sm" variant="outline" onPress={exportVtt} isDisabled={!allDone}>
-                          导出 VTT
+                          {t.jobsExportVtt}
                         </Button>
                       </>
                     )}
@@ -154,7 +157,7 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
 
                 {cacheStats && (
                   <div className="text-xs text-default-500">
-                    缓存：{cacheStats.count} 个视频 / {(cacheStats.totalBytes / 1024 / 1024).toFixed(1)} MB
+                    {t.jobsCacheLabel} {cacheStats.count} {t.jobsVideosLabel} {(cacheStats.totalBytes / 1024 / 1024).toFixed(1)} MB
                   </div>
                 )}
                 {shots.map((s) => {
@@ -173,7 +176,7 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
                         </div>
                         <div className="text-default-600">{s.summary}</div>
                         {job?.error && (
-                          <div className="text-danger">错误：{job.error}</div>
+                          <div className="text-danger">{t.jobsError}{job.error}</div>
                         )}
                         {job?.videoUri && (
                           <ShotPlayer
@@ -185,7 +188,7 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
                         <div className="flex flex-wrap gap-2">
                           {status === "failed" && (
                             <Button size="sm" variant="ghost" onPress={() => retry(s.index)}>
-                              重试
+                              {t.jobsRetry}
                             </Button>
                           )}
                           <RegenerateButton shot={s} onRegenerate={regenerate} />
@@ -198,11 +201,11 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
               <Drawer.Footer>
                 {running ? (
                   <Button variant="danger" onPress={cancel}>
-                    取消
+                    {t.jobsCancel}
                   </Button>
                 ) : (
                   <Button variant="ghost" onPress={reset} isDisabled={total === 0}>
-                    清空
+                    {t.jobsReset}
                   </Button>
                 )}
               </Drawer.Footer>
@@ -223,6 +226,7 @@ function ShotPlayer({
   videoUri: string;
   blobUrl?: string;
 }) {
+  const { t } = useI18n();
   // Try the IDB cache first; fall back to the live proxy if Veo's URI is still fresh.
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(blobUrl ?? null);
   const [restoring, setRestoring] = useState<boolean>(!blobUrl);
@@ -266,7 +270,7 @@ function ShotPlayer({
   if (restoring && !resolvedUrl) {
     return (
       <div className="flex items-center gap-2 text-xs text-default-500">
-        <Spinner size="sm" /> 加载缓存…
+        <Spinner size="sm" /> {t.jobsLoadingCache}
       </div>
     );
   }
@@ -294,15 +298,15 @@ function ShotPlayer({
           className="text-primary underline"
           href={`/api/video/proxy?uri=${encodeURIComponent(videoUri)}&download=1`}
         >
-          下载 mp4
+          {t.jobsDownloadMp4}
         </a>
         {vttUrl && (
           <a className="text-primary underline" href={vttUrl} download={`shot-${shot.index}.vtt`}>
-            下载 vtt
+            {t.jobsDownloadVtt}
           </a>
         )}
         <span className={hasCache ? "text-success" : "text-warning"}>
-          {hasCache ? "已缓存" : "未缓存（实时代理）"}
+          {hasCache ? t.jobsCached : t.jobsNotCached}
         </span>
       </div>
     </div>
@@ -323,11 +327,12 @@ function RegenerateButton({
 }) {
   const [editing, setEditing] = useState(false);
   const [prompt, setPrompt] = useState(shot.veoPrompt);
+  const { t } = useI18n();
 
   if (!editing) {
     return (
       <Button size="sm" variant="ghost" onPress={() => { setPrompt(shot.veoPrompt); setEditing(true); }}>
-        重生镜头
+        {t.jobsRegenerate}
       </Button>
     );
   }
@@ -347,10 +352,10 @@ function RegenerateButton({
           onPress={() => { onRegenerate(shot.index, prompt); setEditing(false); }}
           isDisabled={!prompt.trim()}
         >
-          重新生成
+          {t.jobsRegenerateConfirm}
         </Button>
         <Button size="sm" variant="ghost" onPress={() => setEditing(false)}>
-          取消
+          {t.jobsCancelEdit}
         </Button>
       </div>
     </div>

@@ -3,6 +3,7 @@
 import { Button, Drawer, useOverlayState } from "@heroui/react";
 import { useEffect } from "react";
 import { useSessionsStore } from "@/lib/stores/sessions";
+import { useI18n } from "@/lib/i18n";
 
 export function SessionsPanel() {
   const overlay = useOverlayState();
@@ -13,6 +14,7 @@ export function SessionsPanel() {
   const newSession = useSessionsStore((s) => s.newSession);
   const load = useSessionsStore((s) => s.load);
   const loaded = useSessionsStore((s) => s.loaded);
+  const { t } = useI18n();
 
   useEffect(() => {
     if (!loaded) void load();
@@ -21,7 +23,7 @@ export function SessionsPanel() {
   return (
     <>
       <Button variant="outline" size="sm" onPress={overlay.open}>
-        会话{sessions.length > 0 ? ` (${sessions.length})` : ""}
+        {t.sessionsLabel}{sessions.length > 0 ? ` (${sessions.length})` : ""}
       </Button>
       <Drawer state={overlay}>
         <Drawer.Backdrop>
@@ -29,13 +31,13 @@ export function SessionsPanel() {
             <Drawer.Dialog>
               <Drawer.Header>
                 <div className="flex w-full items-center justify-between">
-                  <h3 className="text-base font-semibold">会话历史</h3>
+                  <h3 className="text-base font-semibold">{t.sessionsTitle}</h3>
                   <Drawer.CloseTrigger />
                 </div>
               </Drawer.Header>
               <Drawer.Body className="space-y-1">
                 {sessions.length === 0 && (
-                  <div className="text-sm text-default-500">暂无会话</div>
+                  <div className="text-sm text-default-500">{t.sessionsEmpty}</div>
                 )}
                 {sessions.map((s) => (
                   <div
@@ -53,16 +55,16 @@ export function SessionsPanel() {
                     >
                       <div className="truncate font-medium">{s.title}</div>
                       <div className="text-xs text-default-500">
-                        {s.messages.length} 条 · {new Date(s.updatedAt).toLocaleString()}
+                        {s.messages.length} {t.sessionsMessages} · {new Date(s.updatedAt).toLocaleString()}
                       </div>
                     </button>
                     <button
                       type="button"
                       onClick={() => void remove(s.id)}
                       className="text-xs text-default-500 opacity-0 group-hover:opacity-100"
-                      aria-label="删除"
+                      aria-label={t.sessionsDelete}
                     >
-                      删除
+                      {t.sessionsDelete}
                     </button>
                   </div>
                 ))}
@@ -75,7 +77,7 @@ export function SessionsPanel() {
                     overlay.close();
                   }}
                 >
-                  + 新建会话
+                  {t.sessionsNew}
                 </Button>
               </Drawer.Footer>
             </Drawer.Dialog>
@@ -85,3 +87,4 @@ export function SessionsPanel() {
     </>
   );
 }
+
