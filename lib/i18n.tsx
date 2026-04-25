@@ -76,6 +76,7 @@ export type Messages = {
   chatRetry: string;
   chatCopied: string;
   chatClickCopy: string;
+  chatGenSuccess: (n: number) => string;
 
   // Storyboard view
   sbStyle: string;
@@ -213,6 +214,7 @@ const en: Messages = {
   chatRetry: "Re-split shots",
   chatCopied: "Copied",
   chatClickCopy: "Click to copy",
+  chatGenSuccess: (n) => `✅ Generation successful — ${n} shot${n === 1 ? "" : "s"}\n\nReview the storyboard below, then click **Confirm & Generate Video** to start rendering.`,
 
   sbStyle: "Style:",
   sbLanguage: "Language:",
@@ -343,6 +345,7 @@ const zh: Messages = {
   chatRetry: "重新生成分镜",
   chatCopied: "已复制",
   chatClickCopy: "点击复制",
+  chatGenSuccess: (n) => `✅ 生成成功，共 ${n} 个镜头\n\n请检查下方分镜表，确认无误后点击**确认并生成视频**开始渲染。`,
 
   sbStyle: "风格：",
   sbLanguage: "语言：",

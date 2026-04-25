@@ -162,7 +162,7 @@ export function ChatWorkspace() {
         {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: `✅ ${d.storyboard.shots.length}`,
+          content: t.chatGenSuccess(d.storyboard.shots.length),
           storyboard: d.storyboard as Storyboard,
         },
       ]);
