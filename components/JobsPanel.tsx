@@ -162,7 +162,7 @@ export function JobsPanel({ triggerLabel = "查看生成进度", activeSessionId
                   const status = job?.status ?? "queued";
                   return (
                     <Card key={s.index}>
-                      <Card.Content className="space-y-2 p-4 text-sm">
+                      <Card.Content className="space-y-2 text-sm">
                         <div className="flex items-center justify-between">
                           <div className="font-semibold">
                             #{s.index} · {s.durationSec}s

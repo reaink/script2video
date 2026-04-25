@@ -1,32 +1,22 @@
 import { cookies } from "next/headers";
 import crypto from "node:crypto";
-import { promises as fs } from "node:fs";
-import path from "node:path";
 
 const COOKIE_NAME = "s2v_session";
-const SECRET_FILE = path.join(process.cwd(), ".session-secret");
 
 let cachedSecret: Buffer | null = null;
 
-async function getSecret(): Promise<Buffer> {
+function getSecret(): Buffer {
   if (cachedSecret) return cachedSecret;
-  if (process.env.SESSION_SECRET) {
-    cachedSecret = crypto
-      .createHash("sha256")
-      .update(process.env.SESSION_SECRET)
-      .digest();
-    return cachedSecret;
+  const raw = process.env.SESSION_SECRET;
+  if (!raw) {
+    throw new Error(
+      "SESSION_SECRET environment variable is not set. " +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\" " +
+      "and add it to your .env.local file."
+    );
   }
-  try {
-    const buf = await fs.readFile(SECRET_FILE);
-    cachedSecret = buf.length === 32 ? buf : crypto.createHash("sha256").update(buf).digest();
-    return cachedSecret;
-  } catch {
-    const fresh = crypto.randomBytes(32);
-    await fs.writeFile(SECRET_FILE, fresh, { mode: 0o600 });
-    cachedSecret = fresh;
-    return cachedSecret;
-  }
+  cachedSecret = crypto.createHash("sha256").update(raw).digest();
+  return cachedSecret;
 }
 
 export interface SessionData {
@@ -57,7 +47,7 @@ export async function readSession(): Promise<SessionData | null> {
   const v = c.get(COOKIE_NAME)?.value;
   if (!v) return null;
   try {
-    const key = await getSecret();
+    const key = getSecret();
     return JSON.parse(decrypt(v, key)) as SessionData;
   } catch {
     return null;
@@ -66,7 +56,7 @@ export async function readSession(): Promise<SessionData | null> {
 
 export async function writeSession(data: SessionData): Promise<void> {
   const c = await cookies();
-  const key = await getSecret();
+  const key = getSecret();
   c.set(COOKIE_NAME, encrypt(JSON.stringify(data), key), {
     httpOnly: true,
     sameSite: "lax",
