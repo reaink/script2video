@@ -343,7 +343,7 @@ export function ChatWorkspace() {
   return (
     <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 px-4 py-6 lg:grid-cols-[320px_1fr]">
       {/* 左：参数面板 */}
-      <Card className="h-fit lg:sticky lg:top-20">
+      <Card className="h-fit lg:sticky lg:top-20" variant="secondary">
         <Card.Content className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">{t.paramsTitle}</h2>
