@@ -267,7 +267,7 @@ const en: Messages = {
   sessionsMessages: "messages",
   sessionsVideos: "videos",
   sessionsDelete: "Delete",
-  sessionsNew: "+ New Session",
+  sessionsNew: "New Session",
 
   toastNoChatModel: "Please select a chat model first",
   toastNoVideoModel: "Please select a video model",
@@ -399,7 +399,7 @@ const zh: Messages = {
   sessionsMessages: "条",
   sessionsVideos: "视频",
   sessionsDelete: "删除",
-  sessionsNew: "+ 新建会话",
+  sessionsNew: "新建会话",
 
   toastNoChatModel: "请先选择对话模型",
   toastNoVideoModel: "请选择视频模型",
