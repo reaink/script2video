@@ -2,6 +2,7 @@
 
 import { Button, Card, Chip, Drawer, Spinner, useOverlayState } from "@heroui/react";
 import { useEffect, useMemo, useState } from "react";
+import { Download, FileText, Film, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useJobsStore } from "@/lib/stores/jobs";
 import { getCachedVideoUrl, getCacheStats } from "@/lib/db/videoCache";
 import { buildShotVtt, buildFullSrt, buildFullVtt, vttToDataUrl } from "@/lib/utils/vtt";
@@ -99,7 +100,8 @@ export function JobsPanel({ triggerLabel, activeSessionId }: Props) {
   }, [running]);
   return (
     <>
-      <Button variant="outline" size="sm" onPress={overlay.open} isDisabled={total === 0}>
+      <Button variant="outline" size="sm" onPress={overlay.open} isDisabled={total === 0} className="gap-1.5">
+        <Film className="size-4" />
         {triggerLabel ?? t.jobsTrigger}
         {total > 0 && (
           <Chip size="sm" variant="soft" className="ml-2">
@@ -135,7 +137,9 @@ export function JobsPanel({ triggerLabel, activeSessionId }: Props) {
                       variant="outline"
                       onPress={exportVideo}
                       isDisabled={done === 0 || !!exportProgress}
+                      className="gap-1.5"
                     >
+                      <Download className="size-4" />
                       {exportProgress
                         ? exportProgress.phase === "done"
                           ? t.jobsExportDone
@@ -144,11 +148,11 @@ export function JobsPanel({ triggerLabel, activeSessionId }: Props) {
                     </Button>
                     {hasSubtitles && (
                       <>
-                        <Button size="sm" variant="outline" onPress={exportSrt} isDisabled={!allDone}>
-                          {t.jobsExportSrt}
+                        <Button size="sm" variant="outline" onPress={exportSrt} isDisabled={!allDone} className="gap-1.5">
+                          <FileText className="size-4" />{t.jobsExportSrt}
                         </Button>
-                        <Button size="sm" variant="outline" onPress={exportVtt} isDisabled={!allDone}>
-                          {t.jobsExportVtt}
+                        <Button size="sm" variant="outline" onPress={exportVtt} isDisabled={!allDone} className="gap-1.5">
+                          <FileText className="size-4" />{t.jobsExportVtt}
                         </Button>
                       </>
                     )}
@@ -187,8 +191,8 @@ export function JobsPanel({ triggerLabel, activeSessionId }: Props) {
                         )}
                         <div className="flex flex-wrap gap-2">
                           {status === "failed" && (
-                            <Button size="sm" variant="ghost" onPress={() => retry(s.index)}>
-                              {t.jobsRetry}
+                            <Button size="sm" variant="ghost" onPress={() => retry(s.index)} className="gap-1.5">
+                              <RotateCcw className="size-4" />{t.jobsRetry}
                             </Button>
                           )}
                           <RegenerateButton shot={s} onRegenerate={regenerate} />
@@ -200,12 +204,12 @@ export function JobsPanel({ triggerLabel, activeSessionId }: Props) {
               </Drawer.Body>
               <Drawer.Footer>
                 {running ? (
-                  <Button variant="danger" onPress={cancel}>
-                    {t.jobsCancel}
+                  <Button variant="danger" onPress={cancel} className="gap-1.5">
+                    <Square className="size-4" />{t.jobsCancel}
                   </Button>
                 ) : (
-                  <Button variant="ghost" onPress={reset} isDisabled={total === 0}>
-                    {t.jobsReset}
+                  <Button variant="ghost" onPress={reset} isDisabled={total === 0} className="gap-1.5">
+                    <Trash2 className="size-4" />{t.jobsReset}
                   </Button>
                 )}
               </Drawer.Footer>
@@ -331,8 +335,8 @@ function RegenerateButton({
 
   if (!editing) {
     return (
-      <Button size="sm" variant="ghost" onPress={() => { setPrompt(shot.veoPrompt); setEditing(true); }}>
-        {t.jobsRegenerate}
+      <Button size="sm" variant="ghost" onPress={() => { setPrompt(shot.veoPrompt); setEditing(true); }} className="gap-1.5">
+        <RefreshCw className="size-4" />{t.jobsRegenerate}
       </Button>
     );
   }
@@ -351,8 +355,9 @@ function RegenerateButton({
           variant="primary"
           onPress={() => { onRegenerate(shot.index, prompt); setEditing(false); }}
           isDisabled={!prompt.trim()}
+          className="gap-1.5"
         >
-          {t.jobsRegenerateConfirm}
+          <RefreshCw className="size-4" />{t.jobsRegenerateConfirm}
         </Button>
         <Button size="sm" variant="ghost" onPress={() => setEditing(false)}>
           {t.jobsCancelEdit}

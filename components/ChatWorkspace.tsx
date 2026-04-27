@@ -21,6 +21,7 @@ import { JobsPanel } from "@/components/JobsPanel";
 import { SessionsPanel } from "@/components/SessionsPanel";
 import type { GeminiModel, ReferenceImage, Storyboard } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
+import { Check, Clapperboard, Copy, ImagePlus, RefreshCw, RotateCcw, Send } from "lucide-react";
 
 type Models = { chat: GeminiModel[]; video: GeminiModel[]; image: GeminiModel[] };
 
@@ -346,8 +347,8 @@ export function ChatWorkspace() {
         <Card.Content className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold">{t.paramsTitle}</h2>
-            <Button size="sm" variant="ghost" onPress={refreshModels} isDisabled={loadingModels}>
-              {loadingModels ? <Spinner size="sm" /> : t.paramsRefreshModels}
+            <Button size="sm" variant="ghost" isIconOnly onPress={refreshModels} isDisabled={loadingModels} aria-label={t.paramsRefreshModels}>
+              {loadingModels ? <Spinner size="sm" /> : <RefreshCw className="size-4" />}
             </Button>
           </div>
 
@@ -645,8 +646,9 @@ export function ChatWorkspace() {
             variant="outline"
             onPress={() => fileInputRef.current?.click()}
             isDisabled={refImages.length >= MAX_REFERENCE_IMAGES}
+            className="gap-1.5"
           >
-            {t.chatUpload} {refImages.length}/{MAX_REFERENCE_IMAGES}
+            <ImagePlus className="size-4" />{t.chatUpload} {refImages.length}/{MAX_REFERENCE_IMAGES}
           </Button>
           <TextArea
             value={input}
@@ -661,8 +663,8 @@ export function ChatWorkspace() {
               }
             }}
           />
-          <Button variant="primary" onPress={submit} isDisabled={submitting || !input.trim()}>
-            {submitting ? <Spinner size="sm" color="current" /> : t.chatSubmit}
+          <Button variant="primary" onPress={submit} isDisabled={submitting || !input.trim()} className="gap-1.5">
+            {submitting ? <Spinner size="sm" color="current" /> : <><Send className="size-4" />{t.chatSubmit}</>}
           </Button>
         </div>
       </div>
@@ -701,6 +703,7 @@ function MessageBubble({
             <Card.Content className="relative">
               <pre className="whitespace-pre-wrap font-sans text-sm">{msg.content}</pre>
               <Chip className="absolute right-3 top-2 bg-accent opacity-0 transition-opacity group-hover:opacity-100">
+                {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
                 {copied ? t.chatCopied : t.chatClickCopy}
               </Chip>
             </Card.Content>
@@ -709,8 +712,8 @@ function MessageBubble({
         {isLastUnanswered && (
           <div className="mt-1 flex items-center justify-end gap-2">
             <span className="text-xs text-warning">{t.chatInterrupted}</span>
-            <Button size="sm" variant="outline" onPress={onRetry}>
-              {t.chatRetry}
+            <Button size="sm" variant="outline" onPress={onRetry} className="gap-1.5">
+              <RotateCcw className="size-4" />{t.chatRetry}
             </Button>
           </div>
         )}
@@ -801,8 +804,8 @@ function StoryboardView({
         ))}
       </div>
       <div className="flex gap-2">
-        <Button variant="primary" size="sm" onPress={() => onStart(sb)}>
-          {t.sbGenerate}
+        <Button variant="primary" size="sm" onPress={() => onStart(sb)} className="gap-1.5">
+          <Clapperboard className="size-4" />{t.sbGenerate}
         </Button>
       </div>
     </Card>

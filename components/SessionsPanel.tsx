@@ -2,6 +2,7 @@
 
 import { Button, Drawer, useOverlayState } from "@heroui/react";
 import { useEffect } from "react";
+import { MessageSquare, Plus, Trash2 } from "lucide-react";
 import { useSessionsStore } from "@/lib/stores/sessions";
 import { useJobsStore } from "@/lib/stores/jobs";
 import { useI18n } from "@/lib/i18n";
@@ -26,16 +27,17 @@ export function SessionsPanel() {
   return (
     <>
       <div className="flex items-center gap-1">
-        <Button variant="outline" size="sm" onPress={overlay.open}>
-          {t.sessionsLabel}{sessions.length > 0 ? ` (${sessions.length})` : ""}
+        <Button variant="outline" size="sm" onPress={overlay.open} className="gap-1.5">
+          <MessageSquare className="size-4" />{t.sessionsLabel}{sessions.length > 0 ? ` (${sessions.length})` : ""}
         </Button>
         <Button
           variant="ghost"
           size="sm"
+          isIconOnly
           onPress={() => newSession()}
           aria-label={t.sessionsNew}
         >
-          +
+          <Plus className="size-4" />
         </Button>
       </div>
       <Drawer state={overlay}>
@@ -90,7 +92,7 @@ export function SessionsPanel() {
                         className="text-xs text-default-500 opacity-0 group-hover:opacity-100"
                         aria-label={t.sessionsDelete}
                       >
-                        {t.sessionsDelete}
+                        <Trash2 className="size-3.5" />
                       </button>
                     </div>
                   );
@@ -103,8 +105,9 @@ export function SessionsPanel() {
                     newSession();
                     overlay.close();
                   }}
+                  className="gap-1.5"
                 >
-                  {t.sessionsNew}
+                  <Plus className="size-4" />{t.sessionsNew}
                 </Button>
               </Drawer.Footer>
             </Drawer.Dialog>

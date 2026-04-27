@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Button, Card } from "@heroui/react";
+import { Settings } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
 export function WelcomeCard() {
@@ -14,7 +15,7 @@ export function WelcomeCard() {
           <p className="text-default-600">{t.welcomeDesc}</p>
           <div>
             <Link href="/settings">
-              <Button variant="primary">{t.welcomeGoSettings}</Button>
+              <Button variant="primary" className="gap-1.5"><Settings className="size-4" />{t.welcomeGoSettings}</Button>
             </Link>
           </div>
         </Card.Content>
